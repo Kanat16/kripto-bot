@@ -7,9 +7,7 @@ from telebot import types
 from flask import Flask, request
 
 # ⚠️ BURAYA BOTFATHER'DAN ALDIĞINIZ GERÇEK ŞİFREYİ YAZIN (ÖRN: "123456:ABCdef...")
-TELEGRAM_TOKEN = "
-
-8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"
+TELEGRAM_TOKEN = "8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"
 WHALE_THRESHOLD_USD = 50000  
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
