@@ -6,9 +6,12 @@ import telebot
 from telebot import types
 from flask import Flask, request
 
-# ⚠️ Kendi token kodunuzu tırnakların içine yazın
+# Başındaki tırnak işaretleri ve gereksiz import os satırları tamamen temizlendi
 import os
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+
+
+
 
 WHALE_THRESHOLD_USD = 50000  
 
