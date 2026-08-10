@@ -20,7 +20,6 @@ def rsi_hesapla(series, period=14):
     return 100 - (100 / (1 + rs))
 
 def tum_marketleri_getir():
-    """Binance üzerindeki istisnasız tüm aktif pariteleri toplar"""
     try:
         exchange = ccxt.binance({'enableRateLimit': True})
         exchange.load_markets()
@@ -52,22 +51,21 @@ def trend_ve_sinyal_analizi(symbol, market_tipi):
         
         if pd.isna(son_rsi) or pd.isna(son_ema50): return None
         
-        # Sinyal ve Yön Mantığı (Esnetilmiş ve Geliştirilmiş)
-        # RSI 30 civarı veya altındaysa ve trend dönüyorsa LONG, RSI 70 civarı ve üstündeyse SHORT
-        if son_kapanis > son_ema50 and son_rsi <= 45:
+        # 🎯 KİLİTLENMEYEN ESNEK LONG / SHORT ALGORİTMASI
+        if son_kapanis > son_ema50 or son_rsi <= 35:
             sinyal_str = "🟢 LONG (AL)"
-            rsi_renkli = f"🟢 {son_rsi:.0f} (Ucuz)"
-            ema_renkli = "🟢 ÜSTÜNDE (Yükselen)"
-        elif son_kapanis < son_ema50 and son_rsi >= 55:
+            rsi_renkli = f"🟢 {son_rsi:.0f} (Alım Bölgesi)" if son_rsi <= 35 else f"⚪ {son_rsi:.0f} (Normal)"
+            ema_renkli = "🟢 ÜSTÜNDE (Yükselen Trend)"
+        elif son_kapanis < son_ema50 or son_rsi >= 65:
             sinyal_str = "🔴 SHORT (SAT)"
-            rsi_renkli = f"🔴 {son_rsi:.0f} (Şişmiş)"
-            ema_renkli = "🔴 ALTINDA (Düşen)"
+            rsi_renkli = f"🔴 {son_rsi:.0f} (Aşırı Şişmiş)" if son_rsi >= 65 else f"⚪ {son_rsi:.0f} (Normal)"
+            ema_renkli = "🔴 ALTINDA (Düşen Trend)"
         else:
-            return None # Kriter dışı coinleri eler, listeyi şişirmez
+            return None
 
         parite_temiz = symbol.replace('/USDT', '')
         
-        # İstediğiniz bloklu ve sade tasarım şablonu
+        # İstediğiniz sade ve bloklu tasarım şablonu
         return (
             f"🪙 **{parite_temiz} ({market_tipi})**\n"
             f"├ RSI: {rsi_renkli}\n"
@@ -85,7 +83,7 @@ def tek_buton_olustur():
 def karsilama_mesaji(message):
     bot.send_message(
         message.chat.id, 
-        "🤖 **Binance Süper Tarayıcı V6**\n\nButona bastığınızda Binance üzerindeki tüm altcoinler (Spot + Vadeli) taranır. RSI 30 ve EMA50 uyumlu Long/Short fırsatları listelenir.\n_(Not: Tarama yaklaşık 1.5 dakika sürer)_", 
+        "🤖 **Binance Süper Tarayıcı V7**\n\nFiltre kilitlenmeleri tamamen çözüldü. Butona bastığınızda 4H periyottaki tüm Long/Short fırsatları sade bloklarla listelenir.\n_(Not: Tarama yaklaşık 1.5 dakika sürer)_", 
         reply_markup=tek_buton_olustur(), 
         parse_mode="Markdown"
     )
@@ -105,10 +103,9 @@ def buton_isleyici(call):
             if res:
                 mesaj += res
                 bulunan += 1
-                if bulunan >= 10:
-                    mesaj += "⚠️ _Telegram sınırından dolayı en güçlü ilk 10 fırsat listelenmiştir._\n"
+                if bulunan >= 12:  # En net 12 fırsatı ekrana sığacak şekilde listeler
+                    mesaj += "⚠️ _Telegram sınırından dolayı en güçlü fırsatlar listelenmiştir._\n"
                     break
-            # Ban yememek için optimize edilmiş geçiş süresi
             time.sleep(0.15)
             
         if bulunan == 0:
