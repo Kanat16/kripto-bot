@@ -6,9 +6,10 @@ import telebot
 from telebot import types
 from flask import Flask, request
 
-import os
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+# ⚠️ BURAYA BOTFATHER'DAN ALDIĞINIZ GERÇEK ŞİFREYİ YAZIN (ÖRN: "123456:ABCdef...")
+TELEGRAM_TOKEN = "
 
+8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"
 WHALE_THRESHOLD_USD = 50000  
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
@@ -21,28 +22,30 @@ def rsi_hesapla(series, period=14):
     rs = gain / (loss + 1e-10)
     return 100 - (100 / (1 + rs))
 
-def marketleri_getir(market_type='spot'):
-    """Binance üzerindeki AKTİF pariteleri getirir, delist olanları otomatik dışarıda bırakır"""
+def tum_marketleri_getir():
+    """Binance üzerindeki istisnasız tüm aktif spot ve vadeli USDT paritelerini toplar"""
     try:
         exchange = ccxt.binance({'enableRateLimit': True})
         exchange.load_markets()
-        semboller = []
+        pariteler = []
         for symbol, market in exchange.markets.items():
-            # Delist olmuş veya inaktif pariteleri 'active' filtresiyle doğrudan eliyoruz
             if market['quote'] == 'USDT' and market['active']:
+                # Karmaşayı önlemek için kaldıraçlı tokenları ve stabil pariteleri eliyoruz
                 if "UP/" in symbol or "DOWN/" in symbol or "BUSD" in symbol or "EUR" in symbol:
                     continue
-                if market_type == 'spot' and market['spot']: 
-                    semboller.append((symbol, market))
-                elif market_type == 'swap' and market['linear']: 
-                    semboller.append((symbol, market))
-        return semboller
-    except: return []
+                
+                if market['spot']:
+                    pariteler.append((symbol, market, 'SPOT'))
+                elif market['linear']:
+                    pariteler.append((symbol, market, 'VADELİ'))
+        return pariteler
+    except:
+        return []
 
-def trend_ve_balina_analizi(symbol, market_info, timeframe='4h', market_type='spot'):
+def trend_ve_balina_analizi(symbol, market_info, market_tipi):
     try:
         exchange = ccxt.binance({'enableRateLimit': True})
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=100)
+        ohlcv = exchange.fetch_ohlcv(symbol, '4h', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         if len(df) < 55: return None
         
@@ -72,61 +75,65 @@ def trend_ve_balina_analizi(symbol, market_info, timeframe='4h', market_type='sp
             if buy_ratio > 55: balina_durum = "AL"
             elif sell_ratio > 55: balina_durum = "SAT"
             
-        # DELIST RİSKİ (İzleme Etiketi) KONTROLÜ
-        # Binance API verilerindeki koruma etiketlerini tarar
         risk_etiketi = ""
         info = market_info.get('info', {})
         permissions = info.get('permissions', [])
-        
-        # Eğer coinin izinlerinde TRADING_TRADITIONAL dışında kısıtlamalar veya risk ibareleri varsa işaretle
         if info.get('isMarginTradingAllowed') == False or "LEVERAGE" in permissions:
-            risk_etiketi = "⚠️RİSK"
+            risk_etiketi = "⚠️R"
 
+        parite_temiz = symbol.replace('/USDT', '')
         if son_kapanis > son_ema50 and son_rsi < 45 and balina_durum == "AL":
-            sinyal = f"⚡ AL {risk_etiketi}".strip()
-            return [symbol.replace('/USDT', ''), "🟢YÜKSELEN", f"🟢{son_rsi:.0f}", f"🐳 %{buy_ratio:.0f}", sinyal]
+            return f"`{parite_temiz:<7} | {market_tipi:<5} | 🟢{son_rsi:.0f} | 🐳%{buy_ratio:.0f} | ⚡AL {risk_etiketi}`\n".strip() + "\n"
         elif son_kapanis < son_ema50 and son_rsi > 55 and balina_durum == "SAT":
-            sinyal = f"💥 SAT {risk_etiketi}".strip()
-            return [symbol.replace('/USDT', ''), "🔴DÜŞEN", f"🔴{son_rsi:.0f}", f"🚨 %{sell_ratio:.0f}", sinyal]
+            return f"`{parite_temiz:<7} | {market_tipi:<5} | 🔴{son_rsi:.0f} | 🚨%{sell_ratio:.0f} | 💥SAT {risk_etiketi}`\n".strip() + "\n"
         return None
-    except: return None
+    except:
+        return None
 
-def ana_butonlari_olustur():
+def tek_buton_olustur():
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("🟢 TÜM SPOT PİYASAYI TARA", callback_data="tara_spot"),
-               types.InlineKeyboardButton("🔴 TÜM VADELİ PİYASAYI TARA", callback_data="tara_vadeli"))
+    markup.add(types.InlineKeyboardButton("🔍 TÜM PİYASAYI TEK TIKLA TARA", callback_data="tara_hepsini"))
     return markup
 
 @bot.message_handler(commands=['start', 'menu'])
 def karsilama_mesaji(message):
-    bot.send_message(message.chat.id, "🤖 **Binance 4H Tüm Piyasa Tarayıcı (Delist Korumalı)**\nTaramayı başlatmak için butonları kullanın.\n_(Not: Tarama yaklaşık 1.5 dakika sürer)_", reply_markup=ana_butonlari_olustur(), parse_mode="Markdown")
+    bot.send_message(
+        message.chat.id, 
+        "🤖 **Binance 4H Süper Tarayıcı V2**\n\nTek butonla hem Spot hem Vadeli tüm altcoin piyasasını taratabilirsiniz.\n_(Not: Dev tarama yaklaşık 2 dakika sürer)_", 
+        reply_markup=tek_buton_olustur(), 
+        parse_mode="Markdown"
+    )
 
 @bot.callback_query_handler(func=lambda call: True)
 def buton_isleyici(call):
-    bot.answer_callback_query(call.id, text="Tüm piyasa taranıyor (Delist kontrolü aktif)...")
-    market_tipi = 'spot' if call.data == 'tara_spot' else 'swap'
-    gecici = bot.send_message(call.message.chat.id, f"🔄 Binance üzerindeki TÜM {market_tipi.upper()} pariteleri tek tek taranıyor... Lütfen bekleyin.")
-    
-    secilen_marketler = marketleri_getir(market_tipi)
-    
-    mesaj = f"📊 **TÜM PİYASA 4H TARAMA ({market_tipi.upper()})**\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n`Çift      | Trend    | RSI  | Balina | Sinyal`\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n"
-    bulunan = 0
-    
-    for symbol, market_info in secilen_marketler:
-        res = trend_ve_balina_analizi(symbol, market_info, timeframe='4h', market_type=market_tipi)
-        if res:
-            mesaj += f"`{res:<9} | {res:<8} | {res:<4} | {res:<6} | {res}`\n"
-            bulunan += 1
-            if bulunan >= 15:
-                mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n⚠️ _Mesaj boyutu sınırından dolayı ilk 15 fırsat listelenmiştir._"
-                break
-        time.sleep(0.25)
+    if call.data == "tara_hepsini":
+        bot.answer_callback_query(call.id, text="Dev tarama motoru çalıştırıldı (2 dk sürebilir)...")
+        gecici = bot.send_message(call.message.chat.id, "🔄 Binance üzerindeki istisnasız TÜM Spot ve Vadeli pariteler taranıyor... Lütfen analiz tablosunu bekleyin.")
         
-    if bulunan == 0: mesaj += "ℹ️ _Şu anda kriterlere uyan aktif bir fırsat yok._\n"
-    if bulunan < 15: mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`"
-    
-    bot.delete_message(call.message.chat.id, gecici.message_id)
-    bot.send_message(call.message.chat.id, mesaj, reply_markup=ana_butonlari_olustur(), parse_mode="Markdown")
+        tum_listeler = tum_marketleri_getir()
+        
+        mesaj = f"📊 **TÜM PİYASA SÜPER TARAMA (4H)**\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n`Çift    | Tip   | RSI | Balina | Sinyal`\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n"
+        bulunan = 0
+        
+        for symbol, market_info, market_tipi in tum_listeler:
+            res = trend_ve_balina_analizi(symbol, market_info, market_tipi)
+            if res:
+                mesaj += res
+                bulunan += 1
+                # Telegram mesaj uzunluğu sınırına takılmamak için maksimum 15 güçlü fırsatı listeliyoruz
+                if bulunan >= 15:
+                    mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n⚠️ _Sınır nedeniyle ilk 15 güçlü fırsat listelenmiştir._"
+                    break
+            # Sunucu güvenliği için her coinde 0.20 saniye bekleme
+            time.sleep(0.20)
+            
+        if bulunan == 0: 
+            mesaj += "ℹ️ _Şu anda kriterlere uyan aktif bir fırsat yok._\n"
+        if bulunan < 15: 
+            mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`"
+        
+        bot.delete_message(call.message.chat.id, gecici.message_id)
+        bot.send_message(call.message.chat.id, mesaj, reply_markup=tek_buton_olustur(), parse_mode="Markdown")
 
 @app.route('/' + TELEGRAM_TOKEN, methods=['POST'])
 def getMessage():
