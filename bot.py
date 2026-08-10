@@ -1,9 +1,9 @@
 import os
 import time
-import requests  # Verileri Binance yerine CoinGecko'dan çekmek için doğrudan istek atıyoruz
 import telebot
 from telebot import types
 from flask import Flask, request
+from tradingview_ta import TA_Handler, Interval, Exchange
 
 # ⚠️ BURAYA BOTFATHER'DAN ALDIĞINIZ GERÇEK ŞİFREYİ YAZIN
 TELEGRAM_TOKEN = "8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"
@@ -13,14 +13,14 @@ app = Flask(__name__)
 
 def tek_buton_olustur():
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("🔍 TÜM PİYASAYI ANLIK TARA", callback_data="tara_hepsini"))
+    markup.add(types.InlineKeyboardButton("🔍 KRİPTO SİNYAL BULUCUYU ÇALIŞTIR", callback_data="tara_hepsini"))
     return markup
 
 @bot.message_handler(commands=['start', 'menu'])
 def karsilama_mesaji(message):
     bot.send_message(
         message.chat.id, 
-        "🤖 **Kripto 4H Durum Tarayıcı (Alternatif Kaynak)**\n\nBinance engelleri tamamen aşıldı! Taramayı başlatmak için aşağıdaki butona basabilirsiniz.", 
+        "🤖 **Binance 4H Kripto Sinyal Bulucu (TradingView Altyapılı)**\n\nEkran görüntüsündeki filtre sisteminiz bota entegre edildi! Butona bastığınızda saniyeler içinde sinyaller listelenir.", 
         reply_markup=tek_buton_olustur(), 
         parse_mode="Markdown"
     )
@@ -28,58 +28,63 @@ def karsilama_mesaji(message):
 @bot.callback_query_handler(func=lambda call: True)
 def buton_isleyici(call):
     if call.data == "tara_hepsini":
-        bot.answer_callback_query(call.id, text="Alternatif platformdan veriler çekiliyor...")
-        gecici = bot.send_message(call.message.chat.id, "🔄 Canlı veriler hazırlanıyor, lütfen bekleyin...")
+        bot.answer_callback_query(call.id, text="TradingView sunucularından veriler taranıyor...")
+        gecici = bot.send_message(call.message.chat.id, "🔄 Sinyal bulucu çalıştırıldı... Lütfen bekleyin.")
         
-        mesaj = "📊 **ANLIK KRİPTO DURUM RAPORU (4H)**\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        mesaj = "📊 **BİNANCE 4H KRİPTO SİNYAL RAPORU**\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        # Tarama yapılacak Binance paritelerinin listesi (Genişletilebilir)
+        pariteler = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'AVAXUSDT', 'DOGEUSDT', 'SUIUSDT', 'FETUSDT', 'XLMUSDT', 'STXUSDT', 'BONKUSDT']
+        bulunan = 0
         
         try:
-            # Binance engeline takılmamak için CoinGecko'nun en hafif canlı fiyat API'sini tek istekte çekiyoruz
-            url = "https://coingecko.com"
-            headers = {"accept": "application/json"}
-            response = requests.get(url, headers=headers).json()
-            
-            # CoinGecko isimlerini parite formatına çevirmek için küçük bir harita
-            coin_haritasi = {
-                'bitcoin': 'BTC/USDT', 'ethereum': 'ETH/USDT', 'solana': 'SOL/USDT',
-                'ripple': 'XRP/USDT', 'binancecoin': 'BNB/USDT', 'chainlink': 'LINK/USDT',
-                'dogecoin': 'DOGE/USDT', 'fetch-ai': 'FET/USDT'
-            }
-            
-            bulunan = 0
-            for coin in response:
-                coin_id = coin.get('id')
-                if coin_id in coin_haritasi:
-                    symbol = coin_haritasi[coin_id]
-                    fiyat = float(coin.get('current_price', 0))
-                    degisim = float(coin.get('price_change_percentage_24h', 0))
-                    
-                    # Fiyat basamaklarını güzelleştirme
-                    fiyat_str = f"${fiyat:.2f}" if fiyat >= 1 else f"${fiyat:.4f}"
-                    
-                    # 4H esnetilmiş indikatör simülasyon mantığı (24s fiyata göre asla kilitlenmez)
-                    if degisim >= 0:
-                        sinyal = "🟢 LONG (AL)"
-                        rsi_str = "🟢 32 (Alım Bölgesi)" if degisim < 1.5 else "⚪ 45 (Normal)"
-                        ema_str = "🟢 ÜSTÜNDE (Yükselen Trend)"
-                    else:
-                        sinyal = "🔴 SHORT (SAT)"
-                        rsi_str = "🔴 71 (Aşırı Şişmiş)" if degisim > -1.5 else "⚪ 54 (Normal)"
-                        ema_str = "🔴 ALTINDA (Düşen Trend)"
-                    
-                    # Tam istediğiniz o dikey çizgisiz, sade ve bloklu şablon tasarımı
-                    mesaj += (
-                        f"🪙 **{symbol} (SPOT)**\n"
-                        f"├ RSI: {rsi_str}\n"
-                        f"├ EMA50: {ema_str}\n"
-                        f"└ Sinyal: **{sinyal}**\n\n"
-                    )
-                    bulunan += 1
-            
+            for symbol in pariteler:
+                # TradingView sunucularından anlık indikatör analizlerini çekiyoruz (Ban yeme riski sıfırdır)
+                handler = TA_Handler(
+                    symbol=symbol,
+                    screener="crypto",
+                    exchange="BINANCE",
+                    interval=Interval.INTERVAL_4_HOURS
+                )
+                analysis = handler.get_analysis()
+                
+                rsi = analysis.indicators.get("RSI")
+                close = analysis.indicators.get("close")
+                ema50 = analysis.indicators.get("EMA50")
+                
+                if rsi is None or close is None or ema50 is None:
+                    continue
+                
+                # Sizin görseldeki filtreniz: RSI 30 civarı/altı ve EMA durumuna göre Long/Short tespiti
+                # RSI durum renklendirmesi
+                if rsi <= 35:
+                    rsi_str = f"🟢 {rsi:.1f} (Ucuz)"
+                    sinyal = "🟢 LONG (AL)"
+                    ema_str = "🟢 ÜSTÜNDE (Yükselen)" if close > ema50 else "🔴 ALTINDA (Düşen)"
+                elif rsi >= 65:
+                    rsi_str = f"🔴 {rsi:.1f} (Şişmiş)"
+                    sinyal = "🔴 SHORT (SAT)"
+                    ema_str = "🟢 ÜSTÜNDE (Yükselen)" if close > ema50 else "🔴 ALTINDA (Düşen)"
+                else:
+                    # Karmaşayı önlemek için nötr durumdaki coinleri göstermeyip listeyi temiz tutuyoruz
+                    continue
+                
+                parite_temiz = symbol.replace('USDT', '/USDT')
+                mesaj += (
+                    f"🪙 **{parite_temiz} (SPOT)**\n"
+                    f"├ RSI: {rsi_str}\n"
+                    f"├ EMA50: {ema_str}\n"
+                    f"└ Yön: **{sinyal}**\n\n"
+                )
+                bulunan += 1
+                
             mesaj += "━━━━━━━━━━━━━━━━━━━━"
             
+            if bulunan == 0:
+                mesaj = "📊 **BİNANCE 4H KRİPTO SİNYAL RAPORU**\n━━━━━━━━━━━━━━━━━━━━\n\nℹ️ Şu anda TradingView kriterlerine uyan aktif bir Long veya Short fırsatı bulunamadı.\n━━━━━━━━━━━━━━━━━━━━"
+                
         except Exception as e:
-            mesaj += f"❌ Alternatif Veri Çekme Hatası: {str(e)}\nLütfen Render'dan Manual Deploy yapın."
+            mesaj += f"❌ Analiz Hatası: {str(e)}"
         
         bot.delete_message(call.message.chat.id, gecici.message_id)
         bot.send_message(call.message.chat.id, mesaj, reply_markup=tek_buton_olustur(), parse_mode="Markdown")
