@@ -2,4 +2,4 @@ ccxt
 pyTelegramBotAPI
 pandas
 flask
-
+tradingview-ta
