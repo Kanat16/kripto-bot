@@ -36,7 +36,7 @@ def tum_marketleri_getir():
         return pariteler
     except: return []
 
-def trend_ve_balina_analizi(symbol, market_info, market_tipi):
+def trend_ve_balina_analizi(symbol, market_tipi):
     try:
         exchange = ccxt.binance({'enableRateLimit': True})
         ohlcv = exchange.fetch_ohlcv(symbol, '4h', limit=100)
@@ -52,6 +52,16 @@ def trend_ve_balina_analizi(symbol, market_info, market_tipi):
         
         if pd.isna(son_rsi) or pd.isna(son_ema50): return None
         
+        trend_str = "🟢AL" if son_kapanis > son_ema50 else "🔴SAT"
+        
+        # 🎯 RSI GÖSTERGE MANTIĞI 30 VE 70 SINIRLARINA GÖRE GÜNCELLENDİ
+        if son_rsi <= 30:
+            rsi_str = f"🟢{son_rsi:.0f}" # 30 altı aşırı ucuz (Alım bölgesi)
+        elif son_rsi >= 70:
+            rsi_str = f"🔴{son_rsi:.0f}" # 70 üstü aşırı şişmiş (Satış bölgesi)
+        else:
+            rsi_str = f"⚪{son_rsi:.0f}" # Güvenli/Nötr bölge
+        
         trades = exchange.fetch_trades(symbol, limit=100)
         buy_whale_vol, sell_whale_vol, total_whale_vol = 0, 0, 0
         for trade in trades:
@@ -61,60 +71,46 @@ def trend_ve_balina_analizi(symbol, market_info, market_tipi):
                 if trade['side'] == 'buy': buy_whale_vol += usd_size
                 elif trade['side'] == 'sell': sell_whale_vol += usd_size
         
-        balina_durum = "NÖTR"
-        buy_ratio, sell_ratio = 0, 0
+        balina_str = "⚪Sakin"
         if total_whale_vol > 0:
             buy_ratio = (buy_whale_vol / total_whale_vol) * 100
             sell_ratio = (sell_whale_vol / total_whale_vol) * 100
-            if buy_ratio >= 50: balina_durum = "AL"
-            elif sell_ratio >= 50: balina_durum = "SAT"
-            
-        risk_etiketi = ""
-        info = market_info.get('info', {})
-        permissions = info.get('permissions', [])
-        if info.get('isMarginTradingAllowed') == False or "LEVERAGE" in permissions:
-            risk_etiketi = "⚠️R"
+            if buy_ratio >= 50: balina_str = f"🐳%{buy_ratio:.0f}"
+            elif sell_ratio >= 50: balina_str = f"🚨%{sell_ratio:.0f}"
 
         parite_temiz = symbol.replace('/USDT', '')
-        if son_kapanis > son_ema50 and son_rsi < 50 and balina_durum == "AL":
-            return f"`{parite_temiz:<7} | {market_tipi:<5} | 🟢{son_rsi:.0f} | 🐳%{buy_ratio:.0f} | ⚡AL {risk_etiketi}`\n".strip() + "\n"
-        elif son_kapanis < son_ema50 and son_rsi > 50 and balina_durum == "SAT":
-            return f"`{parite_temiz:<7} | {market_tipi:<5} | 🔴{son_rsi:.0f} | 🚨%{sell_ratio:.0f} | 💥SAT {risk_etiketi}`\n".strip() + "\n"
-        return None
+        return f"`{parite_temiz:<7} | {market_tipi:<5} | {rsi_str:<3} | {balina_str:<5} | {trend_str}`\n"
     except: return None
 
 def tek_buton_olustur():
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("🔍 TÜM PİYASAYI TEK TIKLA TARA", callback_data="tara_hepsini"))
+    markup.add(types.InlineKeyboardButton("🔍 TÜM PİYASAYI ANLIK TARA", callback_data="tara_hepsini"))
     return markup
 
 @bot.message_handler(commands=['start', 'menu'])
 def karsilama_mesaji(message):
-    bot.send_message(message.chat.id, "🤖 **Binance 4H Tüm Piyasa Tarayıcı**\n\nTek butonla hem Spot hem Vadeli tüm altcoin piyasasını taratabilirsiniz.\n_(Not: Dev tarama yaklaşık 2 dakika sürer)_", reply_markup=tek_buton_olustur(), parse_mode="Markdown")
+    bot.send_message(message.chat.id, "🤖 **Binance 4H Tüm Piyasa Durum Tarayıcı (RSI 30 Limitli)**\n\nButona bastığınızda tüm havuz taranır ve en aktif 30 paritenin RSI 30/70 uyumlu raporu listelenir.", reply_markup=tek_buton_olustur(), parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: True)
 def buton_isleyici(call):
     if call.data == "tara_hepsini":
-        bot.answer_callback_query(call.id, text="Tarama başlatıldı...")
-        gecici = bot.send_message(call.message.chat.id, "🔄 Binance üzerindeki TÜM Spot ve Vadeli pariteler tek tek taranıyor... Lütfen bekleyin.")
+        bot.answer_callback_query(call.id, text="RSI 30 odaklı tarama başlatıldı...")
+        gecici = bot.send_message(call.message.chat.id, "🔄 Tüm Binance pariteleri taranıyor... Lütfen bekleyin.")
         
         tum_listeler = tum_marketleri_getir()
-        mesaj = f"📊 **TÜM PİYASA SÜPER TARAMA (4H)**\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n`Çift    | Tip   | RSI | Balina | Sinyal`\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n"
+        mesaj = f"📊 **TÜM PİYASA DURUM RAPORU (4H)**\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n`Çift    | Tip   | RSI | Balina | EMA50`\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n"
         bulunan = 0
         
         for symbol, market_info, market_tipi in tum_listeler:
-            res = trend_ve_balina_analizi(symbol, market_info, market_tipi)
+            res = trend_ve_balina_analizi(symbol, market_tipi)
             if res:
                 mesaj += res
                 bulunan += 1
-                if bulunan >= 15:
-                    mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n⚠️ _Sınır nedeniyle ilk 15 güçlü fırsat listelenmiştir._"
+                if bulunan >= 30:
                     break
-            time.sleep(0.20)
+            time.sleep(0.15)
             
-        if bulunan == 0: mesaj += "ℹ️ _Şu anda kriterlere uyan aktif bir fırsat yok._\n"
-        if bulunan < 15: mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`"
-        
+        mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`"
         bot.delete_message(call.message.chat.id, gecici.message_id)
         bot.send_message(call.message.chat.id, mesaj, reply_markup=tek_buton_olustur(), parse_mode="Markdown")
 
