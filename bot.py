@@ -3,13 +3,26 @@ import time
 import ccxt
 import pandas as pd
 import telebot
+from flask import Flask
+import threading
 
 # ⚠️ GEREKLİ TANIMLAMALARI YAPIN
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-MY_CHAT_ID = "8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"
+MY_CHAT_ID = "8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"  # Örn: "54231678"
 WHALE_THRESHOLD_USD = 50000  
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+# Render'ın "No open ports detected" hatası vermemesi için sahte web sunucusu
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot Calisiyor", 200
+
+def web_sunucu_baslat():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 def rsi_hesapla(series, period=14):
     delta = series.diff()
@@ -38,7 +51,6 @@ def tum_marketleri_getir():
 def trend_ve_balina_analizi(symbol, market_info, market_tipi):
     try:
         exchange = ccxt.binance({'enableRateLimit': True})
-        # 🎯 Başarı oranı en yüksek makro periyot: 4 Saatlik (4h)
         ohlcv = exchange.fetch_ohlcv(symbol, '4h', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         if len(df) < 55: return None
@@ -77,7 +89,6 @@ def trend_ve_balina_analizi(symbol, market_info, market_tipi):
 
         parite_temiz = symbol.replace('/USDT', '')
         
-        # 4H Grafiklerde güvenli ama sinyal yakalayacak esnek RSI sınırları (50 altı al, 50 üstü sat)
         if son_kapanis > son_ema50 and son_rsi < 50 and balina_durum == "AL":
             return f"`{parite_temiz:<7} | {market_tipi:<5} | 🟢{son_rsi:.0f} | 🐳%{buy_ratio:.0f} | ⚡AL {risk_etiketi}`\n".strip() + "\n"
         elif son_kapanis < son_ema50 and son_rsi > 50 and balina_durum == "SAT":
@@ -87,7 +98,7 @@ def trend_ve_balina_analizi(symbol, market_info, market_tipi):
         return None
 
 def otomatik_tarama_gorevi():
-    print("⏰ 4 Saatlik periyodik makro tarama başlatıldı...")
+    print("⏰ Periyodik otomatik tarama başlatıldı...")
     tum_listeler = tum_marketleri_getir()
     
     mesaj = f"🚨 **4H MAKRO PİYASA TARAMASI (GÜVENLİ MOD)**\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n`Çift    | Tip   | RSI | Balina | Sinyal`\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n"
@@ -114,13 +125,20 @@ def otomatik_tarama_gorevi():
     else:
         print("⚪ Bu periyotta makro kriterlere uyan güvenli coin bulunamadı, sessiz geçiliyor.")
 
-if __name__ == "__main__":
-    print("🚀 4 Saatlik (4H) Otomatik Makro Tarayıcı Başlatıldı...")
-    
-    # Sunucu her açıldığında veya güncellendiğinde hemen ilk taramayı yapar
+def ana_dongu():
+    # İlk açılışta hemen bir kez tarasın
     otomatik_tarama_gorevi()
-    
-    # 4 Saatlik kusursuz döngü (4 saat = 14400 saniye)
     while True:
         print("💤 Bir sonraki makro tarama için 4 saatlik bekleme moduna girildi...")
         time.sleep(14400)
+
+if __name__ == "__main__":
+    print("🚀 Otomatik Web Port Destekli Tarayıcı Başlatıldı...")
+    
+    # 1. Render limanını mutlu etmek için sahte web sunucusunu arka planda açıyoruz
+    t_web = threading.Thread(target=web_sunucu_baslat)
+    t_web.daemon = True
+    t_web.start()
+    
+    # 2. Ana tarama döngüsünü başlatıyoruz
+    ana_dongu()
