@@ -7,7 +7,9 @@ from telebot import types
 from flask import Flask, request
 
 # ⚠️ Kendi token kodunuzu tırnakların içine yazın
-TELEGRAM_TOKEN = "BURAYA_TELEGRAM_BOT_TOKEN_YAZIN"
+import os
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+
 WHALE_THRESHOLD_USD = 50000  
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
