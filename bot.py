@@ -1,13 +1,13 @@
 import ccxt
 import pandas as pd
-import pandas_ta as ta
 import telebot
 from telebot import types
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 
-TELEGRAM_TOKEN = "8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"
+# ⚠️ BURAYA KENDİ TOKEN KODUNUZU YAPIŞTIRIN
+TELEGRAM_TOKEN = "BURAYA_TELEGRAM_BOT_TOKEN_YAZIN"
 WHALE_THRESHOLD_USD = 50000  
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
@@ -22,6 +22,14 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 def web_sunucu_baslat():
     server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
     server.serve_forever()
+
+def rsi_hesapla(series, period=14):
+    """Pandas-ta yerine RSI indikatörünü saf matematik ile hesaplar"""
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / (loss + 1e-10)
+    return 100 - (100 / (1 + rs))
 
 def marketleri_getir(market_type='spot'):
     try:
@@ -39,9 +47,16 @@ def trend_ve_balina_analizi(symbol, timeframe='4h', market_type='spot'):
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         if len(df) < 55: return None
-        df['RSI'] = ta.rsi(df['close'], length=14)
-        df['EMA50'] = ta.ema(df['close'], length=50)
-        son_rsi, son_kapanis, son_ema50 = df['RSI'].iloc[-1], df['close'].iloc[-1], df['EMA50'].iloc[-1]
+        
+        # Saf matematiksel indikatör hesaplamaları
+        df['RSI'] = rsi_hesapla(df['close'], period=14)
+        df['EMA50'] = df['close'].ewm(span=50, adjust=False).mean()
+        
+        son_rsi = df['RSI'].iloc[-1]
+        son_kapanis = df['close'].iloc[-1]
+        son_ema50 = df['EMA50'].iloc[-1]
+        
+        if pd.isna(son_rsi) or pd.isna(son_ema50): return None
         
         trades = exchange.fetch_trades(symbol, limit=100)
         buy_whale_vol, sell_whale_vol, total_whale_vol = 0, 0, 0
@@ -52,6 +67,8 @@ def trend_ve_balina_analizi(symbol, timeframe='4h', market_type='spot'):
                 if trade['side'] == 'buy': buy_whale_vol += usd_size
                 elif trade['side'] == 'sell': sell_whale_vol += usd_size
         balina_durum = "NÖTR"
+        buy_ratio = 0
+        sell_ratio = 0
         if total_whale_vol > 0:
             buy_ratio = (buy_whale_vol / total_whale_vol) * 100
             sell_ratio = (sell_whale_vol / total_whale_vol) * 100
