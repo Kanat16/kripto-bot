@@ -3,28 +3,15 @@ import pandas as pd
 import telebot
 from telebot import types
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import threading
 
-# ⚠️ BURAYA KENDİ TOKEN KODUNUZU YAPIŞTIRIN
-TELEGRAM_TOKEN = "8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"
+# ⚠️ Kendi token kodunuzu tırnakların içine yazın
+TELEGRAM_TOKEN = "BURAYA_TELEGRAM_BOT_TOKEN_YAZIN"
 WHALE_THRESHOLD_USD = 50000  
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 exchange = ccxt.binance({'enableRateLimit': True})
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot Aktif")
-
-def web_sunucu_baslat():
-    server = HTTPServer(('0.0.0.0', 10000), HealthCheckHandler)
-    server.serve_forever()
-
 def rsi_hesapla(series, period=14):
-    """Pandas-ta yerine RSI indikatörünü saf matematik ile hesaplar"""
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
@@ -48,7 +35,6 @@ def trend_ve_balina_analizi(symbol, timeframe='4h', market_type='spot'):
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         if len(df) < 55: return None
         
-        # Saf matematiksel indikatör hesaplamaları
         df['RSI'] = rsi_hesapla(df['close'], period=14)
         df['EMA50'] = df['close'].ewm(span=50, adjust=False).mean()
         
@@ -115,8 +101,5 @@ def buton_isleyici(call):
     bot.send_message(call.message.chat.id, mesaj, reply_markup=ana_butonlari_olustur(), parse_mode="Markdown")
 
 if __name__ == "__main__":
-    t = threading.Thread(target=web_sunucu_baslat)
-    t.daemon = True
-    t.start()
-    print("Bot başlatıldı...")
+    print("Bot döngüsü başlatılıyor...")
     bot.polling(none_stop=True)
