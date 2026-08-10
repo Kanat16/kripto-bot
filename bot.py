@@ -3,15 +3,13 @@ import time
 import ccxt
 import pandas as pd
 import telebot
-from telebot import types
-from flask import Flask, request
 
-# ⚠️ BURAYA BOTFATHER'DAN ALDIĞINIZ GERÇEK ŞİFREYİ YAZIN (ÖRN: "123456:ABCdef...")
-TELEGRAM_TOKEN = "8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"
+# ⚠️ GEREKLİ TANIMLAMALARI YAPIN
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+MY_CHAT_ID = "8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"
 WHALE_THRESHOLD_USD = 50000  
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
-app = Flask(__name__)
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 def rsi_hesapla(series, period=14):
     delta = series.diff()
@@ -40,6 +38,7 @@ def tum_marketleri_getir():
 def trend_ve_balina_analizi(symbol, market_info, market_tipi):
     try:
         exchange = ccxt.binance({'enableRateLimit': True})
+        # 🎯 Başarı oranı en yüksek makro periyot: 4 Saatlik (4h)
         ohlcv = exchange.fetch_ohlcv(symbol, '4h', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         if len(df) < 55: return None
@@ -67,7 +66,6 @@ def trend_ve_balina_analizi(symbol, market_info, market_tipi):
         if total_whale_vol > 0:
             buy_ratio = (buy_whale_vol / total_whale_vol) * 100
             sell_ratio = (sell_whale_vol / total_whale_vol) * 100
-            # 🎯 BALİNA ORANI %55'TEN %50'YE DÜŞÜRÜLDÜ (DAHA ÇOK COIN YAKALAMAK İÇİN)
             if buy_ratio >= 50: balina_durum = "AL"
             elif sell_ratio >= 50: balina_durum = "SAT"
             
@@ -79,7 +77,7 @@ def trend_ve_balina_analizi(symbol, market_info, market_tipi):
 
         parite_temiz = symbol.replace('/USDT', '')
         
-        # 🎯 RSI SINIRLARI GENİŞLETİLDİ (AL İÇİN 45 -> 50'YE, SAT İÇİN 55 -> 50'YE)
+        # 4H Grafiklerde güvenli ama sinyal yakalayacak esnek RSI sınırları (50 altı al, 50 üstü sat)
         if son_kapanis > son_ema50 and son_rsi < 50 and balina_durum == "AL":
             return f"`{parite_temiz:<7} | {market_tipi:<5} | 🟢{son_rsi:.0f} | 🐳%{buy_ratio:.0f} | ⚡AL {risk_etiketi}`\n".strip() + "\n"
         elif son_kapanis < son_ema50 and son_rsi > 50 and balina_durum == "SAT":
@@ -88,65 +86,41 @@ def trend_ve_balina_analizi(symbol, market_info, market_tipi):
     except:
         return None
 
-def tek_buton_olustur():
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("🔍 TÜM PİYASAYI TEK TIKLA TARA", callback_data="tara_hepsini"))
-    return markup
-
-@bot.message_handler(commands=['start', 'menu'])
-def karsilama_mesaji(message):
-    bot.send_message(
-        message.chat.id, 
-        "🤖 **Binance 4H Süper Tarayıcı V2 (Optimize Edildi)**\n\nTek butonla hem Spot hem Vadeli tüm altcoin piyasasını taratabilirsiniz.\n_(Not: Dev tarama yaklaşık 2 dakika sürer)_", 
-        reply_markup=tek_buton_olustur(), 
-        parse_mode="Markdown"
-    )
-
-@bot.callback_query_handler(func=lambda call: True)
-def buton_isleyici(call):
-    if call.data == "tara_hepsini":
-        bot.answer_callback_query(call.id, text="Dev tarama motoru çalıştırıldı (2 dk sürebilir)...")
-        gecici = bot.send_message(call.message.chat.id, "🔄 Binance üzerindeki istisnasız TÜM Spot ve Vadeli pariteler taranıyor... Lütfen analiz tablosunu bekleyin.")
+def otomatik_tarama_gorevi():
+    print("⏰ 4 Saatlik periyodik makro tarama başlatıldı...")
+    tum_listeler = tum_marketleri_getir()
+    
+    mesaj = f"🚨 **4H MAKRO PİYASA TARAMASI (GÜVENLİ MOD)**\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n`Çift    | Tip   | RSI | Balina | Sinyal`\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n"
+    bulunan = 0
+    
+    for symbol, market_info, market_tipi in tum_listeler:
+        res = trend_ve_balina_analizi(symbol, market_info, market_tipi)
+        if res:
+            mesaj += res
+            bulunan += 1
+            if bulunan >= 15:
+                mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n⚠️ _Sınır nedeniyle ilk 15 güçlü fırsat listelenmiştir._"
+                break
+        time.sleep(0.20)
         
-        tum_listeler = tum_marketleri_getir()
-        
-        mesaj = f"📊 **TÜM PİYASA SÜPER TARAMA (4H)**\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n`Çift    | Tip   | RSI | Balina | Sinyal`\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n"
-        bulunan = 0
-        
-        for symbol, market_info, market_tipi in tum_listeler:
-            res = trend_ve_balina_analizi(symbol, market_info, market_tipi)
-            if res:
-                mesaj += res
-                bulunan += 1
-                if bulunan >= 15:
-                    mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n⚠️ _Sınır nedeniyle ilk 15 güçlü fırsat listelenmiştir._"
-                    break
-            time.sleep(0.20)
-            
-        if bulunan == 0: 
-            mesaj += "ℹ️ _Şu anda kriterlere uyan aktif bir fırsat yok._\n"
-        if bulunan < 15: 
+    if bulunan > 0:
+        if bulunan < 15:
             mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`"
-        
-        bot.delete_message(call.message.chat.id, gecici.message_id)
-        bot.send_message(call.message.chat.id, mesaj, reply_markup=tek_buton_olustur(), parse_mode="Markdown")
-
-@app.route('/' + TELEGRAM_TOKEN, methods=['POST'])
-def getMessage():
-    json_string = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_string)
-    bot.process_new_updates([update])
-    return "!", 200
-
-@app.route("/")
-def webhook():
-    bot.remove_webhook()
-    render_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if render_url:
-        bot.set_webhook(url=render_url + '/' + TELEGRAM_TOKEN)
-        return "Webhook Başarıyla Kuruldu!", 200
-    return "Render URL bulunamadı.", 400
+        try:
+            bot.send_message(MY_CHAT_ID, mesaj, parse_mode="Markdown")
+            print("🟢 4H Makro fırsatları başarıyla Telegram'a gönderildi.")
+        except Exception as e:
+            print(f"Mesaj gönderme hatası: {e}")
+    else:
+        print("⚪ Bu periyotta makro kriterlere uyan güvenli coin bulunamadı, sessiz geçiliyor.")
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    print("🚀 4 Saatlik (4H) Otomatik Makro Tarayıcı Başlatıldı...")
+    
+    # Sunucu her açıldığında veya güncellendiğinde hemen ilk taramayı yapar
+    otomatik_tarama_gorevi()
+    
+    # 4 Saatlik kusursuz döngü (4 saat = 14400 saniye)
+    while True:
+        print("💤 Bir sonraki makro tarama için 4 saatlik bekleme moduna girildi...")
+        time.sleep(14400)
