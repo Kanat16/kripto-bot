@@ -6,7 +6,9 @@ import telebot
 from telebot import types
 from flask import Flask, request
 
+import os
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+
 WHALE_THRESHOLD_USD = 50000  
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
