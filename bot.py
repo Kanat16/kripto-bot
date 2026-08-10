@@ -3,7 +3,7 @@ import telebot
 from flask import Flask, request
 
 # ⚠️ BURAYA BOTFATHER'DAN ALDIĞINIZ GERÇEK ŞİFREYİ YAZIN
-TELEGRAM_TOKEN = "BURAYA_GERCEK_TOKENI_YAZIN"
+TELEGRAM_TOKEN = "8970525485:AAHgJZIzdvWJEPRkcT1C6xOx5qx-eSrviMk"
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 app = Flask(__name__)
 
