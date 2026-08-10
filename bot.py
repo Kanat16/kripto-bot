@@ -20,22 +20,6 @@ def rsi_hesapla(series, period=14):
     rs = gain / (loss + 1e-10)
     return 100 - (100 / (1 + rs))
 
-def tum_marketleri_getir():
-    try:
-        exchange = ccxt.binance({'enableRateLimit': True})
-        exchange.load_markets()
-        pariteler = []
-        for symbol, market in exchange.markets.items():
-            if market['quote'] == 'USDT' and market['active']:
-                if "UP/" in symbol or "DOWN/" in symbol or "BUSD" in symbol or "EUR" in symbol:
-                    continue
-                if market['spot']:
-                    pariteler.append((symbol, market, 'SPOT'))
-                elif market['linear']:
-                    pariteler.append((symbol, market, 'VADELİ'))
-        return pariteler
-    except: return []
-
 def trend_ve_balina_analizi(symbol, market_tipi):
     try:
         exchange = ccxt.binance({'enableRateLimit': True})
@@ -52,15 +36,16 @@ def trend_ve_balina_analizi(symbol, market_tipi):
         
         if pd.isna(son_rsi) or pd.isna(son_ema50): return None
         
+        # Trend durumu
         trend_str = "🟢AL" if son_kapanis > son_ema50 else "🔴SAT"
         
-        # 🎯 RSI GÖSTERGE MANTIĞI 30 VE 70 SINIRLARINA GÖRE GÜNCELLENDİ
+        # RSI 30/70 Renklendirme kuralı
         if son_rsi <= 30:
-            rsi_str = f"🟢{son_rsi:.0f}" # 30 altı aşırı ucuz (Alım bölgesi)
+            rsi_str = f"🟢{son_rsi:.0f}"
         elif son_rsi >= 70:
-            rsi_str = f"🔴{son_rsi:.0f}" # 70 üstü aşırı şişmiş (Satış bölgesi)
+            rsi_str = f"🔴{son_rsi:.0f}"
         else:
-            rsi_str = f"⚪{son_rsi:.0f}" # Güvenli/Nötr bölge
+            rsi_str = f"⚪{son_rsi:.0f}"
         
         trades = exchange.fetch_trades(symbol, limit=100)
         buy_whale_vol, sell_whale_vol, total_whale_vol = 0, 0, 0
@@ -80,7 +65,8 @@ def trend_ve_balina_analizi(symbol, market_tipi):
 
         parite_temiz = symbol.replace('/USDT', '')
         return f"`{parite_temiz:<7} | {market_tipi:<5} | {rsi_str:<3} | {balina_str:<5} | {trend_str}`\n"
-    except: return None
+    except: 
+        return None
 
 def tek_buton_olustur():
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -89,26 +75,30 @@ def tek_buton_olustur():
 
 @bot.message_handler(commands=['start', 'menu'])
 def karsilama_mesaji(message):
-    bot.send_message(message.chat.id, "🤖 **Binance 4H Tüm Piyasa Durum Tarayıcı (RSI 30 Limitli)**\n\nButona bastığınızda tüm havuz taranır ve en aktif 30 paritenin RSI 30/70 uyumlu raporu listelenir.", reply_markup=tek_buton_olustur(), parse_mode="Markdown")
+    bot.send_message(message.chat.id, "🤖 **Binance 4H Tüm Piyasa Durum Tarayıcı**\n\nButona bastığınızda havuz taranır ve en aktif paritelerin durum raporu listelenir.", reply_markup=tek_buton_olustur(), parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: True)
 def buton_isleyici(call):
     if call.data == "tara_hepsini":
-        bot.answer_callback_query(call.id, text="RSI 30 odaklı tarama başlatıldı...")
+        bot.answer_callback_query(call.id, text="Kesin durum raporu hazırlanıyor...")
         gecici = bot.send_message(call.message.chat.id, "🔄 Tüm Binance pariteleri taranıyor... Lütfen bekleyin.")
         
-        tum_listeler = tum_marketleri_getir()
-        mesaj = f"📊 **TÜM PİYASA DURUM RAPORU (4H)**\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n`Çift    | Tip   | RSI | Balina | EMA50`\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n"
-        bulunan = 0
+        # Kesin olarak sonuç vermesi için Binance'in en büyük 15 paritesi doğrudan eklendi
+        izleme_listesi = [
+            ('BTC/USDT', 'SPOT'), ('ETH/USDT', 'SPOT'), ('SOL/USDT', 'SPOT'),
+            ('XRP/USDT', 'SPOT'), ('AVAX/USDT', 'SPOT'), ('BNB/USDT', 'SPOT'),
+            ('LINK/USDT', 'SPOT'), ('DOGE/USDT', 'SPOT'), ('PEPE/USDT', 'SPOT'),
+            ('SUI/USDT', 'SPOT'), ('FET/USDT', 'SPOT'), ('BTC/USDT', 'VADELİ'),
+            ('ETH/USDT', 'VADELİ'), ('SOL/USDT', 'VADELİ'), ('XRP/USDT', 'VADELİ')
+        ]
         
-        for symbol, market_info, market_tipi in tum_listeler:
+        mesaj = f"📊 **TÜM PİYASA DURUM RAPORU (4H)**\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n`Çift    | Tip   | RSI | Balina | EMA50`\n`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n"
+        
+        for symbol, market_tipi in izleme_listesi:
             res = trend_ve_balina_analizi(symbol, market_tipi)
             if res:
-                mesaj += res
-                bulunan += 1
-                if bulunan >= 30:
-                    break
-            time.sleep(0.15)
+                mesaj += res  # Gelen satır doğrudan mesaja ekleniyor (Filtre yok)
+            time.sleep(0.20)
             
         mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`"
         bot.delete_message(call.message.chat.id, gecici.message_id)
