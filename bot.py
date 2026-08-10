@@ -21,17 +21,14 @@ def rsi_hesapla(series, period=14):
     return 100 - (100 / (1 + rs))
 
 def tum_marketleri_getir():
-    """Binance üzerindeki istisnasız tüm aktif spot ve vadeli USDT paritelerini toplar"""
     try:
         exchange = ccxt.binance({'enableRateLimit': True})
         exchange.load_markets()
         pariteler = []
         for symbol, market in exchange.markets.items():
             if market['quote'] == 'USDT' and market['active']:
-                # Karmaşayı önlemek için kaldıraçlı tokenları ve stabil pariteleri eliyoruz
                 if "UP/" in symbol or "DOWN/" in symbol or "BUSD" in symbol or "EUR" in symbol:
                     continue
-                
                 if market['spot']:
                     pariteler.append((symbol, market, 'SPOT'))
                 elif market['linear']:
@@ -70,8 +67,9 @@ def trend_ve_balina_analizi(symbol, market_info, market_tipi):
         if total_whale_vol > 0:
             buy_ratio = (buy_whale_vol / total_whale_vol) * 100
             sell_ratio = (sell_whale_vol / total_whale_vol) * 100
-            if buy_ratio > 55: balina_durum = "AL"
-            elif sell_ratio > 55: balina_durum = "SAT"
+            # 🎯 BALİNA ORANI %55'TEN %50'YE DÜŞÜRÜLDÜ (DAHA ÇOK COIN YAKALAMAK İÇİN)
+            if buy_ratio >= 50: balina_durum = "AL"
+            elif sell_ratio >= 50: balina_durum = "SAT"
             
         risk_etiketi = ""
         info = market_info.get('info', {})
@@ -80,9 +78,11 @@ def trend_ve_balina_analizi(symbol, market_info, market_tipi):
             risk_etiketi = "⚠️R"
 
         parite_temiz = symbol.replace('/USDT', '')
-        if son_kapanis > son_ema50 and son_rsi < 45 and balina_durum == "AL":
+        
+        # 🎯 RSI SINIRLARI GENİŞLETİLDİ (AL İÇİN 45 -> 50'YE, SAT İÇİN 55 -> 50'YE)
+        if son_kapanis > son_ema50 and son_rsi < 50 and balina_durum == "AL":
             return f"`{parite_temiz:<7} | {market_tipi:<5} | 🟢{son_rsi:.0f} | 🐳%{buy_ratio:.0f} | ⚡AL {risk_etiketi}`\n".strip() + "\n"
-        elif son_kapanis < son_ema50 and son_rsi > 55 and balina_durum == "SAT":
+        elif son_kapanis < son_ema50 and son_rsi > 50 and balina_durum == "SAT":
             return f"`{parite_temiz:<7} | {market_tipi:<5} | 🔴{son_rsi:.0f} | 🚨%{sell_ratio:.0f} | 💥SAT {risk_etiketi}`\n".strip() + "\n"
         return None
     except:
@@ -97,7 +97,7 @@ def tek_buton_olustur():
 def karsilama_mesaji(message):
     bot.send_message(
         message.chat.id, 
-        "🤖 **Binance 4H Süper Tarayıcı V2**\n\nTek butonla hem Spot hem Vadeli tüm altcoin piyasasını taratabilirsiniz.\n_(Not: Dev tarama yaklaşık 2 dakika sürer)_", 
+        "🤖 **Binance 4H Süper Tarayıcı V2 (Optimize Edildi)**\n\nTek butonla hem Spot hem Vadeli tüm altcoin piyasasını taratabilirsiniz.\n_(Not: Dev tarama yaklaşık 2 dakika sürer)_", 
         reply_markup=tek_buton_olustur(), 
         parse_mode="Markdown"
     )
@@ -118,11 +118,9 @@ def buton_isleyici(call):
             if res:
                 mesaj += res
                 bulunan += 1
-                # Telegram mesaj uzunluğu sınırına takılmamak için maksimum 15 güçlü fırsatı listeliyoruz
                 if bulunan >= 15:
                     mesaj += "`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n⚠️ _Sınır nedeniyle ilk 15 güçlü fırsat listelenmiştir._"
                     break
-            # Sunucu güvenliği için her coinde 0.20 saniye bekleme
             time.sleep(0.20)
             
         if bulunan == 0: 
