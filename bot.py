@@ -1,15 +1,17 @@
+import os
+import time
 import ccxt
 import pandas as pd
 import telebot
 from telebot import types
-import time
+from flask import Flask, request
 
 # ⚠️ Kendi token kodunuzu tırnakların içine yazın
 TELEGRAM_TOKEN = "BURAYA_TELEGRAM_BOT_TOKEN_YAZIN"
 WHALE_THRESHOLD_USD = 50000  
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
-exchange = ccxt.binance({'enableRateLimit': True})
+bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
+app = Flask(__name__)
 
 def rsi_hesapla(series, period=14):
     delta = series.diff()
@@ -20,6 +22,7 @@ def rsi_hesapla(series, period=14):
 
 def marketleri_getir(market_type='spot'):
     try:
+        exchange = ccxt.binance({'enableRateLimit': True})
         exchange.load_markets()
         semboller = []
         for symbol, market in exchange.markets.items():
@@ -31,6 +34,7 @@ def marketleri_getir(market_type='spot'):
 
 def trend_ve_balina_analizi(symbol, timeframe='4h', market_type='spot'):
     try:
+        exchange = ccxt.binance({'enableRateLimit': True})
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         if len(df) < 55: return None
@@ -53,8 +57,7 @@ def trend_ve_balina_analizi(symbol, timeframe='4h', market_type='spot'):
                 if trade['side'] == 'buy': buy_whale_vol += usd_size
                 elif trade['side'] == 'sell': sell_whale_vol += usd_size
         balina_durum = "NÖTR"
-        buy_ratio = 0
-        sell_ratio = 0
+        buy_ratio, sell_ratio = 0, 0
         if total_whale_vol > 0:
             buy_ratio = (buy_whale_vol / total_whale_vol) * 100
             sell_ratio = (sell_whale_vol / total_whale_vol) * 100
@@ -100,6 +103,24 @@ def buton_isleyici(call):
     bot.delete_message(call.message.chat.id, gecici.message_id)
     bot.send_message(call.message.chat.id, mesaj, reply_markup=ana_butonlari_olustur(), parse_mode="Markdown")
 
+# Render portunu dinleyen ana webhook rotası
+@app.route('/' + TELEGRAM_TOKEN, methods=['POST'])
+def getMessage():
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return "!", 200
+
+@app.route("/")
+def webhook():
+    bot.remove_webhook()
+    # RENDER_EXTERNAL_URL, Render tarafından otomatik sağlanan servis adresinizdir
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if render_url:
+        bot.set_webhook(url=render_url + '/' + TELEGRAM_TOKEN)
+        return "Webhook Başarıyla Kuruldu!", 200
+    return "Render URL bulunamadı.", 400
+
 if __name__ == "__main__":
-    print("Bot döngüsü başlatılıyor...")
-    bot.polling(none_stop=True)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
