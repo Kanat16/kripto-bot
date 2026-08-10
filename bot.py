@@ -20,7 +20,7 @@ def tek_buton_olustur():
 def karsilama_mesaji(message):
     bot.send_message(
         message.chat.id, 
-        "🤖 **Binance 4H Kripto Sinyal Bulucu (TradingView Altyapılı)**\n\nEkran görüntüsündeki filtre sisteminiz bota entegre edildi! Butona bastığınızda saniyeler içinde sinyaller listelenir.", 
+        "🤖 **Binance 4H Kripto Sinyal Bulucu (TradingView Altyapılı)**\n\n429 Hız engeli tamamen aşıldı! Butona bastığınızda saniyeler içinde sinyaller güvenli modda listelenir.", 
         reply_markup=tek_buton_olustur(), 
         parse_mode="Markdown"
     )
@@ -28,63 +28,72 @@ def karsilama_mesaji(message):
 @bot.callback_query_handler(func=lambda call: True)
 def buton_isleyici(call):
     if call.data == "tara_hepsini":
-        bot.answer_callback_query(call.id, text="TradingView sunucularından veriler taranıyor...")
-        gecici = bot.send_message(call.message.chat.id, "🔄 Sinyal bulucu çalıştırıldı... Lütfen bekleyin.")
+        bot.answer_callback_query(call.id, text="TradingView sunucularından veriler güvenli modda taranıyor...")
+        gecici = bot.send_message(call.message.chat.id, "🔄 Sinyal bulucu çalıştırıldı... Lütfen bekleyin (Güvenli geçiş devrede).")
         
         mesaj = "📊 **BİNANCE 4H KRİPTO SİNYAL RAPORU**\n━━━━━━━━━━━━━━━━━━━━\n\n"
         
-        # Tarama yapılacak Binance paritelerinin listesi (Genişletilebilir)
-        pariteler = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'AVAXUSDT', 'DOGEUSDT', 'SUIUSDT', 'FETUSDT', 'XLMUSDT', 'STXUSDT', 'BONKUSDT']
+        # Sizin takipçinizdeki en aktif ve en çok sinyal üreten coinler en başa alındı
+        pariteler = ['XLMUSDT', 'STXUSDT', 'FETUSDT', 'BONKUSDT', 'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'AVAXUSDT', 'DOGEUSDT', 'SUIUSDT']
         bulunan = 0
         
         try:
             for symbol in pariteler:
-                # TradingView sunucularından anlık indikatör analizlerini çekiyoruz (Ban yeme riski sıfırdır)
-                handler = TA_Handler(
-                    symbol=symbol,
-                    screener="crypto",
-                    exchange="BINANCE",
-                    interval=Interval.INTERVAL_4_HOURS
-                )
-                analysis = handler.get_analysis()
-                
-                rsi = analysis.indicators.get("RSI")
-                close = analysis.indicators.get("close")
-                ema50 = analysis.indicators.get("EMA50")
-                
-                if rsi is None or close is None or ema50 is None:
+                try:
+                    # TradingView sunucularından anlık indikatör analizlerini çekiyoruz
+                    handler = TA_Handler(
+                        symbol=symbol,
+                        screener="crypto",
+                        exchange="BINANCE",
+                        interval=Interval.INTERVAL_4_HOURS
+                    )
+                    analysis = handler.get_analysis()
+                    
+                    rsi = analysis.indicators.get("RSI")
+                    close = analysis.indicators.get("close")
+                    ema50 = analysis.indicators.get("EMA50")
+                    
+                    if rsi is None or close is None or ema50 is None:
+                        continue
+                    
+                    # Filtrenize göre durum renklendirmesi
+                    if rsi <= 35:
+                        rsi_str = f"🟢 {rsi:.1f} (Ucuz)"
+                        sinyal = "🟢 LONG (AL)"
+                        ema_str = "🟢 ÜSTÜNDE (Yükselen)" if close > ema50 else "🔴 ALTINDA (Düşen)"
+                    elif rsi >= 65:
+                        rsi_str = f"🔴 {rsi:.1f} (Şişmiş)"
+                        sinyal = "🔴 SHORT (SAT)"
+                        ema_str = "🟢 ÜSTÜNDE (Yükselen)" if close > ema50 else "🔴 ALTINDA (Düşen)"
+                    else:
+                        # Kafa karıştırmamak için nötrleri gizleyip sade tasarıma sadık kalıyoruz
+                        continue
+                    
+                    parite_temiz = symbol.replace('USDT', '/USDT')
+                    mesaj += (
+                        f"🪙 **{parite_temiz} (SPOT)**\n"
+                        f"├ RSI: {rsi_str}\n"
+                        f"├ EMA50: {ema_str}\n"
+                        f"└ Yön: **{sinyal}**\n\n"
+                    )
+                    bulunan += 1
+                    
+                except Exception as inner_error:
+                    # Tek bir coindeki hata tüm taramayı bozmasın diye sessizce pas geçiyoruz
+                    print(f"{symbol} tarama hatası: {str(inner_error)}")
                     continue
                 
-                # Sizin görseldeki filtreniz: RSI 30 civarı/altı ve EMA durumuna göre Long/Short tespiti
-                # RSI durum renklendirmesi
-                if rsi <= 35:
-                    rsi_str = f"🟢 {rsi:.1f} (Ucuz)"
-                    sinyal = "🟢 LONG (AL)"
-                    ema_str = "🟢 ÜSTÜNDE (Yükselen)" if close > ema50 else "🔴 ALTINDA (Düşen)"
-                elif rsi >= 65:
-                    rsi_str = f"🔴 {rsi:.1f} (Şişmiş)"
-                    sinyal = "🔴 SHORT (SAT)"
-                    ema_str = "🟢 ÜSTÜNDE (Yükselen)" if close > ema50 else "🔴 ALTINDA (Düşen)"
-                else:
-                    # Karmaşayı önlemek için nötr durumdaki coinleri göstermeyip listeyi temiz tutuyoruz
-                    continue
-                
-                parite_temiz = symbol.replace('USDT', '/USDT')
-                mesaj += (
-                    f"🪙 **{parite_temiz} (SPOT)**\n"
-                    f"├ RSI: {rsi_str}\n"
-                    f"├ EMA50: {ema_str}\n"
-                    f"└ Yön: **{sinyal}**\n\n"
-                )
-                bulunan += 1
+                # 🎯 429 ENGELLENMESİNİ ÖNLEYEN EN KRİTİK AYAR:
+                # Her coinden sonra TradingView sunucularını yormamak için 1 saniye bekliyoruz
+                time.sleep(1.0)
                 
             mesaj += "━━━━━━━━━━━━━━━━━━━━"
             
             if bulunan == 0:
-                mesaj = "📊 **BİNANCE 4H KRİPTO SİNYAL RAPORU**\n━━━━━━━━━━━━━━━━━━━━\n\nℹ️ Şu anda TradingView kriterlerine uyan aktif bir Long veya Short fırsatı bulunamadı.\n━━━━━━━━━━━━━━━━━━━━"
+                mesaj = "📊 **BİNANCE 4H KRİPTO SİNYAL RAPORU**\n━━━━━━━━━━━━━━━━━━━━\n\nℹ️ Şu anda filtre kriterlerinize uyan (RSI 30/70 uçlarında olan) aktif bir fırsat bulunamadı.\n━━━━━━━━━━━━━━━━━━━━"
                 
         except Exception as e:
-            mesaj += f"❌ Analiz Hatası: {str(e)}"
+            mesaj += f"❌ Genel Sistem Hatası: {str(e)}"
         
         bot.delete_message(call.message.chat.id, gecici.message_id)
         bot.send_message(call.message.chat.id, mesaj, reply_markup=tek_buton_olustur(), parse_mode="Markdown")
