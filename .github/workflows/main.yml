@@ -1,0 +1,26 @@
+name: 4H Crypto Scanner
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository'yi al
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Gereksinimleri kur
+        run: pip install -r requirements.txt
+
+      - name: Binance bağlantı testi
+        run: |
+          python -c "import requests; r=requests.get('https://data-api.binance.vision/api/v3/klines', params={'symbol':'BTCUSDT','interval':'4h','limit':3}, timeout=15); print('HTTP:', r.status_code); print(r.text[:500]); r.raise_for_status()"
