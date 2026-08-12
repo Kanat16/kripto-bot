@@ -1,0 +1,33 @@
+name: 4H Crypto Scanner
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository'yi al
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Gereksinimleri kur
+        run: pip install -r requirements.txt
+
+      - name: Botu çalıştır
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TOP_SYMBOLS: "100"
+          MIN_SCORE: "5"
+          COOLDOWN_HOURS: "12"
+          VOLUME_MULTIPLIER: "1.50"
+          POLL_SECONDS: "300"
+        run: python bot.py
