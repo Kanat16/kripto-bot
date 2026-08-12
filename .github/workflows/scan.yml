@@ -30,4 +30,4 @@ jobs:
           COOLDOWN_HOURS: "12"
           VOLUME_MULTIPLIER: "1.50"
           POLL_SECONDS: "300"
-        run: python bot.py
+        run: python -c "import requests; r=requests.get('https://data-api.binance.vision/api/v3/klines', params={'symbol':'BTCUSDT','interval':'4h','limit':3}, timeout=15); print(r.status_code); print(r.text[:500]); r.raise_for_status()"
