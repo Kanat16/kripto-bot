@@ -8,6 +8,7 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Repository'yi al
@@ -19,7 +20,20 @@ jobs:
           python-version: "3.12"
 
       - name: Gereksinimleri kur
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Bot dosyasını kontrol et
+        run: |
+          echo "Bot dosyası kontrol ediliyor..."
+          ls -la
+          test -f bot.py
+          echo "bot.py bulundu."
+
+      - name: Binance bağlantısını test et
+        run: |
+          python -c "import requests; r=requests.get('https://data-api.binance.vision/api/v3/klines', params={'symbol':'BTCUSDT','interval':'4h','limit':3}, timeout=15); print('BINANCE HTTP:', r.status_code); r.raise_for_status()"
 
       - name: Botu çalıştır
         env:
@@ -28,4 +42,8 @@ jobs:
           TOP_SYMBOLS: "100"
           MIN_SCORE: "4"
           VOLUME_MULTIPLIER: "1.50"
-        run: python bot.py
+        run: |
+          echo "================================"
+          echo "4H KRIPTO BOT BASLIYOR"
+          echo "================================"
+          python -u bot.py
