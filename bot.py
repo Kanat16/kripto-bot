@@ -20,6 +20,7 @@ VOLUME_MULTIPLIER = float(os.getenv("VOLUME_MULTIPLIER", "1.50"))
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "300"))
 
 BASE = "https://fapi.binance.com"
+
 session = requests.Session()
 session.headers["User-Agent"] = "KriptoBot-4H/1.0"
 
@@ -173,7 +174,6 @@ def get_symbols():
     result = []
 
     for symbol in info["symbols"]:
-
         if (
             symbol["status"] == "TRADING"
             and symbol["contractType"] == "PERPETUAL"
@@ -192,9 +192,7 @@ def get_top_symbols(all_symbols):
     rows = []
 
     for ticker in tickers:
-
         if ticker["symbol"] in allowed:
-
             rows.append(
                 (
                     ticker["symbol"],
@@ -214,9 +212,7 @@ def get_top_symbols(all_symbols):
 
 
 def get_funding(symbol):
-
     try:
-
         data = api_get(
             "/fapi/v1/premiumIndex",
             {"symbol": symbol}
@@ -227,14 +223,11 @@ def get_funding(symbol):
         )
 
     except Exception:
-
         return 0.0
 
 
 def get_open_interest(symbol):
-
     try:
-
         current = api_get(
             "/fapi/v1/openInterest",
             {"symbol": symbol}
@@ -254,7 +247,6 @@ def get_open_interest(symbol):
         )
 
         if len(history) >= 2:
-
             previous_oi = float(
                 history[-2]["sumOpenInterest"]
             )
@@ -267,20 +259,16 @@ def get_open_interest(symbol):
                 )
             else:
                 change = None
-
         else:
-
             change = None
 
         return current_oi, change
 
     except Exception:
-
         return None, None
 
 
 def get_btc_filter():
-
     df = closed_candles(
         get_klines("BTCUSDT", 100)
     )
@@ -309,7 +297,6 @@ def get_btc_filter():
 
 
 def analyze(symbol, btc_filter):
-
     df = closed_candles(
         get_klines(symbol, 100)
     )
@@ -494,7 +481,6 @@ def analyze(symbol, btc_filter):
 
 
 def format_signal(signal):
-
     long_signal = (
         signal["direction"] == "LONG"
     )
@@ -563,7 +549,6 @@ def format_signal(signal):
 
 
 def should_send(state, signal):
-
     key = (
         f"{signal['symbol']}:"
         f"{signal['direction']}"
@@ -581,7 +566,6 @@ def should_send(state, signal):
 
 
 def scan():
-
     all_symbols = get_symbols()
 
     watchlist = get_top_symbols(
@@ -605,7 +589,6 @@ def scan():
             continue
 
         try:
-
             signal = analyze(
                 symbol,
                 btc_filter
@@ -658,60 +641,27 @@ def scan():
 
 
 def main():
-
     if (
         not TELEGRAM_BOT_TOKEN
         or not TELEGRAM_CHAT_ID
     ):
         raise RuntimeError(
-            "Render Environment Variables eksik."
+            "TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID eksik."
         )
-
-    last_candle = None
 
     logging.info(
         "Kripto Bot başladı."
     )
 
-    while True:
+    try:
+        scan()
 
-        try:
-
-            btc = closed_candles(
-                get_klines(
-                    "BTCUSDT",
-                    3
-                )
-            )
-
-            if len(btc):
-
-                candle = str(
-                    btc.iloc[-1]["close_time"]
-                )
-
-                if candle != last_candle:
-
-                    last_candle = candle
-
-                    scan()
-
-                else:
-
-                    logging.info(
-                        "Yeni 4H kapanışı yok."
-                    )
-
-        except Exception as error:
-
-            logging.exception(
-                "Ana döngü hatası: %s",
-                error
-            )
-
-        time.sleep(
-            POLL_SECONDS
+    except Exception as error:
+        logging.exception(
+            "Tarama hatası: %s",
+            error
         )
+        raise
 
 
 if __name__ == "__main__":
