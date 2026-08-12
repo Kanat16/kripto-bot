@@ -1,8 +1,6 @@
 import os
 import time
-import json
 import logging
-
 import requests
 import pandas as pd
 import numpy as np
@@ -14,17 +12,14 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 TOP_SYMBOLS = int(os.getenv("TOP_SYMBOLS", "100"))
-MIN_SCORE = int(os.getenv("MIN_SCORE", "5"))
-COOLDOWN_HOURS = int(os.getenv("COOLDOWN_HOURS", "12"))
+MIN_SCORE = int(os.getenv("MIN_SCORE", "4"))
 VOLUME_MULTIPLIER = float(os.getenv("VOLUME_MULTIPLIER", "1.50"))
-POLL_SECONDS = int(os.getenv("POLL_SECONDS", "300"))
 
-BASE = "https://fapi.binance.com"
+# Binance SPOT public market data
+BASE = "https://data-api.binance.vision"
 
 session = requests.Session()
-session.headers["User-Agent"] = "KriptoBot-4H/1.0"
-
-STATE_FILE = "state.json"
+session.headers["User-Agent"] = "KriptoBot-4H-Spot/1.0"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,15 +27,24 @@ logging.basicConfig(
 )
 
 
+# =========================================================
+# BINANCE API
+# =========================================================
+
 def api_get(path, params=None):
     response = session.get(
         BASE + path,
         params=params,
-        timeout=15
+        timeout=20
     )
+
     response.raise_for_status()
     return response.json()
 
+
+# =========================================================
+# TELEGRAM
+# =========================================================
 
 def telegram_send(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -48,7 +52,10 @@ def telegram_send(text):
             "TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID eksik."
         )
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    )
 
     response = session.post(
         url,
@@ -57,29 +64,15 @@ def telegram_send(text):
             "text": text,
             "disable_web_page_preview": True
         },
-        timeout=15
+        timeout=20
     )
 
     response.raise_for_status()
 
 
-def load_state():
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as file:
-            return json.load(file)
-    except Exception:
-        return {}
-
-
-def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as file:
-        json.dump(
-            state,
-            file,
-            ensure_ascii=False,
-            indent=2
-        )
-
+# =========================================================
+# INDICATORS
+# =========================================================
 
 def ema(series, period):
     return series.ewm(
@@ -111,9 +104,13 @@ def rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 
+# =========================================================
+# KLINES
+# =========================================================
+
 def get_klines(symbol, limit=100):
     data = api_get(
-        "/fapi/v1/klines",
+        "/api/v3/klines",
         {
             "symbol": symbol,
             "interval": "4h",
@@ -136,16 +133,21 @@ def get_klines(symbol, limit=100):
         "ignore"
     ]
 
-    df = pd.DataFrame(data, columns=columns)
+    df = pd.DataFrame(
+        data,
+        columns=columns
+    )
 
-    for column in [
+    numeric_columns = [
         "open",
         "high",
         "low",
         "close",
         "volume",
         "quote_volume"
-    ]:
+    ]
+
+    for column in numeric_columns:
         df[column] = pd.to_numeric(
             df[column],
             errors="coerce"
@@ -168,37 +170,73 @@ def closed_candles(df):
     ].copy()
 
 
+# =========================================================
+# SYMBOLS
+# =========================================================
+
 def get_symbols():
-    info = api_get("/fapi/v1/exchangeInfo")
+    info = api_get(
+        "/api/v3/exchangeInfo"
+    )
 
     result = []
 
     for symbol in info["symbols"]:
+
+        name = symbol["symbol"]
+
         if (
-            symbol["status"] == "TRADING"
-            and symbol["contractType"] == "PERPETUAL"
-            and symbol["quoteAsset"] == "USDT"
+            symbol.get("status") == "TRADING"
+            and symbol.get("quoteAsset") == "USDT"
+            and symbol.get("isSpotTradingAllowed", True)
         ):
-            result.append(symbol["symbol"])
+
+            # Kaldıraçlı tokenleri dışarıda bırak
+            if any(
+                name.endswith(x)
+                for x in [
+                    "UPUSDT",
+                    "DOWNUSDT",
+                    "BULLUSDT",
+                    "BEARUSDT"
+                ]
+            ):
+                continue
+
+            result.append(name)
 
     return result
 
 
 def get_top_symbols(all_symbols):
-    tickers = api_get("/fapi/v1/ticker/24hr")
+    tickers = api_get(
+        "/api/v3/ticker/24hr"
+    )
 
     allowed = set(all_symbols)
 
     rows = []
 
     for ticker in tickers:
-        if ticker["symbol"] in allowed:
-            rows.append(
-                (
-                    ticker["symbol"],
-                    float(ticker["quoteVolume"])
-                )
+
+        symbol = ticker.get("symbol")
+
+        if symbol not in allowed:
+            continue
+
+        try:
+            quote_volume = float(
+                ticker.get("quoteVolume", 0)
             )
+        except Exception:
+            continue
+
+        rows.append(
+            (
+                symbol,
+                quote_volume
+            )
+        )
 
     rows.sort(
         key=lambda x: x[1],
@@ -211,67 +249,21 @@ def get_top_symbols(all_symbols):
     ]
 
 
-def get_funding(symbol):
-    try:
-        data = api_get(
-            "/fapi/v1/premiumIndex",
-            {"symbol": symbol}
-        )
-
-        return float(
-            data.get("lastFundingRate", 0)
-        )
-
-    except Exception:
-        return 0.0
-
-
-def get_open_interest(symbol):
-    try:
-        current = api_get(
-            "/fapi/v1/openInterest",
-            {"symbol": symbol}
-        )
-
-        current_oi = float(
-            current["openInterest"]
-        )
-
-        history = api_get(
-            "/futures/data/openInterestHist",
-            {
-                "symbol": symbol,
-                "period": "4h",
-                "limit": 2
-            }
-        )
-
-        if len(history) >= 2:
-            previous_oi = float(
-                history[-2]["sumOpenInterest"]
-            )
-
-            if previous_oi:
-                change = (
-                    (current_oi - previous_oi)
-                    / previous_oi
-                    * 100
-                )
-            else:
-                change = None
-        else:
-            change = None
-
-        return current_oi, change
-
-    except Exception:
-        return None, None
-
+# =========================================================
+# BTC TREND FILTER
+# =========================================================
 
 def get_btc_filter():
+
     df = closed_candles(
         get_klines("BTCUSDT", 100)
     )
+
+    if len(df) < 60:
+        return {
+            "long": False,
+            "short": False
+        }
 
     df["ema20"] = ema(
         df["close"],
@@ -283,20 +275,25 @@ def get_btc_filter():
         50
     )
 
-    x = df.iloc[-1]
+    current = df.iloc[-1]
 
     return {
         "long":
-            x["close"] > x["ema20"]
-            and x["ema20"] >= x["ema50"],
+            current["close"] > current["ema20"]
+            and current["ema20"] >= current["ema50"],
 
         "short":
-            x["close"] < x["ema20"]
-            and x["ema20"] <= x["ema50"]
+            current["close"] < current["ema20"]
+            and current["ema20"] <= current["ema50"]
     }
 
 
+# =========================================================
+# COIN ANALYSIS
+# =========================================================
+
 def analyze(symbol, btc_filter):
+
     df = closed_candles(
         get_klines(symbol, 100)
     )
@@ -328,6 +325,12 @@ def analyze(symbol, btc_filter):
     current = df.iloc[-1]
     previous = df.iloc[-2]
 
+    if pd.isna(current["rsi"]):
+        return None
+
+    if pd.isna(current["volume_average"]):
+        return None
+
     volume_ratio = (
         current["volume"]
         / current["volume_average"]
@@ -337,13 +340,9 @@ def analyze(symbol, btc_filter):
         volume_ratio >= VOLUME_MULTIPLIER
     )
 
-    funding_rate = get_funding(symbol)
-
-    oi, oi_change = get_open_interest(symbol)
-
-    # =========================
+    # =====================================================
     # LONG
-    # =========================
+    # =====================================================
 
     long_rsi = (
         30 <= previous["rsi"] <= 42
@@ -354,10 +353,6 @@ def analyze(symbol, btc_filter):
     long_ema = (
         previous["close"] <= previous["ema20"]
         and current["close"] > current["ema20"]
-    )
-
-    long_funding = (
-        funding_rate <= 0.0005
     )
 
     long_trend = (
@@ -382,14 +377,13 @@ def analyze(symbol, btc_filter):
         long_rsi,
         long_ema,
         volume_ok,
-        long_funding,
         long_trend,
         resistance_break
     ])
 
-    # =========================
+    # =====================================================
     # SHORT
-    # =========================
+    # =====================================================
 
     short_rsi = (
         58 <= previous["rsi"] <= 70
@@ -400,10 +394,6 @@ def analyze(symbol, btc_filter):
     short_ema = (
         previous["close"] >= previous["ema20"]
         and current["close"] < current["ema20"]
-    )
-
-    short_funding = (
-        funding_rate >= -0.0005
     )
 
     short_trend = (
@@ -428,15 +418,18 @@ def analyze(symbol, btc_filter):
         short_rsi,
         short_ema,
         volume_ok,
-        short_funding,
         short_trend,
         support_break
     ])
 
+    # =====================================================
+    # DIRECTION
+    # =====================================================
+
     direction = None
     score = 0
+    level = None
 
-    # BTC trend filtresi
     if (
         btc_filter["long"]
         and long_score >= MIN_SCORE
@@ -444,6 +437,7 @@ def analyze(symbol, btc_filter):
     ):
         direction = "LONG"
         score = long_score
+        level = resistance
 
     elif (
         btc_filter["short"]
@@ -452,15 +446,10 @@ def analyze(symbol, btc_filter):
     ):
         direction = "SHORT"
         score = short_score
+        level = support
 
     if direction is None:
         return None
-
-    level = (
-        resistance
-        if direction == "LONG"
-        else support
-    )
 
     return {
         "symbol": symbol,
@@ -471,49 +460,40 @@ def analyze(symbol, btc_filter):
         "rsi": float(current["rsi"]),
         "volume_percent":
             (volume_ratio - 1) * 100,
-        "funding_percent":
-            funding_rate * 100,
-        "oi_change": oi_change,
         "level": float(level),
         "candle":
             current["close_time"].isoformat()
     }
 
 
+# =========================================================
+# TELEGRAM MESSAGE
+# =========================================================
+
 def format_signal(signal):
-    long_signal = (
+
+    is_long = (
         signal["direction"] == "LONG"
     )
 
-    emoji = (
-        "🟢"
-        if long_signal
-        else "🔴"
-    )
+    emoji = "🟢" if is_long else "🔴"
 
-    arrow = (
-        "↗️"
-        if long_signal
-        else "↘️"
-    )
+    arrow = "↗️" if is_long else "↘️"
 
     level_name = (
         "Direnç"
-        if long_signal
+        if is_long
         else "Destek"
     )
 
-    if signal["oi_change"] is None:
-        oi_text = "bilgi yok"
-    else:
-        oi_text = (
-            f"{signal['oi_change']:+.2f}%"
-        )
-
     return (
         f"{emoji} "
-        f"{signal['direction']} ADAYI — "
-        f"{signal['symbol']}\n\n"
+        f"{signal['direction']} ADAYI\n\n"
+
+        f"🪙 Coin: {signal['symbol']}\n"
+
+        f"💰 Fiyat: "
+        f"{signal['price']:.8g}\n\n"
 
         f"RSI: "
         f"{signal['rsi_previous']:.1f}"
@@ -522,66 +502,63 @@ def format_signal(signal):
         f"{arrow}\n"
 
         f"EMA20: "
-        f"{'ÜSTÜNE' if long_signal else 'ALTINA'} "
+        f"{'ÜSTÜNE' if is_long else 'ALTINA'} "
         f"4H KAPANIŞ ✅\n"
+
+        f"EMA50 trend filtresi: ✅\n"
 
         f"Hacim: "
         f"+{signal['volume_percent']:.0f}% 🔥\n"
-
-        f"Funding: "
-        f"{signal['funding_percent']:+.4f}%\n"
-
-        f"OI değişimi: "
-        f"{oi_text}\n"
 
         f"{level_name}: "
         f"{signal['level']:.8g}\n\n"
 
         f"📊 Skor: "
-        f"{signal['score']}/6\n"
+        f"{signal['score']}/5\n\n"
 
-        f"⏱ 4H kapanışı\n\n"
+        f"⏱ Zaman dilimi: 4H\n\n"
 
         f"⚠️ SADECE ADAY SİNYALİ\n"
-        f"Grafiği kontrol et, "
-        f"işlemi sen değerlendir."
+        f"Grafiği kontrol et.\n"
+        f"İşlemi kendin değerlendir."
     )
 
 
-def should_send(state, signal):
-    key = (
-        f"{signal['symbol']}:"
-        f"{signal['direction']}"
-    )
-
-    last_time = state.get(
-        key,
-        0
-    )
-
-    return (
-        time.time() - last_time
-        >= COOLDOWN_HOURS * 3600
-    )
-
+# =========================================================
+# SCAN
+# =========================================================
 
 def scan():
+
+    logging.info(
+        "Coin listesi alınıyor..."
+    )
+
     all_symbols = get_symbols()
+
+    logging.info(
+        "Toplam Spot USDT coin: %d",
+        len(all_symbols)
+    )
 
     watchlist = get_top_symbols(
         all_symbols
     )
 
-    btc_filter = get_btc_filter()
-
-    state = load_state()
-
-    sent = 0
-
     logging.info(
-        "4H tarama başladı: %d coin",
+        "En yüksek hacimli %d coin taranacak.",
         len(watchlist)
     )
+
+    btc_filter = get_btc_filter()
+
+    logging.info(
+        "BTC trend filtresi: LONG=%s SHORT=%s",
+        btc_filter["long"],
+        btc_filter["short"]
+    )
+
+    signals = []
 
     for symbol in watchlist:
 
@@ -589,36 +566,17 @@ def scan():
             continue
 
         try:
+
             signal = analyze(
                 symbol,
                 btc_filter
             )
 
-            if (
-                signal
-                and should_send(
-                    state,
-                    signal
-                )
-            ):
-
-                telegram_send(
-                    format_signal(signal)
-                )
-
-                key = (
-                    f"{signal['symbol']}:"
-                    f"{signal['direction']}"
-                )
-
-                state[key] = time.time()
-
-                save_state(state)
-
-                sent += 1
+            if signal:
+                signals.append(signal)
 
                 logging.info(
-                    "Sinyal: %s %s %d/6",
+                    "Sinyal bulundu: %s %s %d/5",
                     signal["symbol"],
                     signal["direction"],
                     signal["score"]
@@ -634,34 +592,69 @@ def scan():
 
         time.sleep(0.08)
 
+    # =====================================================
+    # SEND TELEGRAM
+    # =====================================================
+
+    if signals:
+
+        # En yüksek skorlular önce
+        signals.sort(
+            key=lambda x: x["score"],
+            reverse=True
+        )
+
+        for signal in signals:
+
+            try:
+                telegram_send(
+                    format_signal(signal)
+                )
+
+            except Exception as error:
+
+                logging.error(
+                    "Telegram gönderim hatası: %s",
+                    error
+                )
+
+    else:
+
+        telegram_send(
+            "🔎 4H Kripto Tarama Tamamlandı\n\n"
+            "Şu anda kriterlerimize uyan "
+            "güçlü LONG/SHORT adayı bulunamadı.\n\n"
+            "📊 RSI + EMA20 + EMA50 + Hacim + "
+            "Destek/Direnç\n"
+            "⏱ 4H"
+        )
+
     logging.info(
-        "Tarama bitti. Gönderilen: %d",
-        sent
+        "Tarama tamamlandı. Sinyal sayısı: %d",
+        len(signals)
     )
 
 
+# =========================================================
+# MAIN
+# =========================================================
+
 def main():
+
     if (
         not TELEGRAM_BOT_TOKEN
         or not TELEGRAM_CHAT_ID
     ):
         raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID eksik."
+            "TELEGRAM_BOT_TOKEN veya "
+            "TELEGRAM_CHAT_ID eksik."
         )
 
     logging.info(
         "Kripto Bot başladı."
     )
 
-    try:
-        scan()
-
-    except Exception as error:
-        logging.exception(
-            "Tarama hatası: %s",
-            error
-        )
-        raise
+    scan()
 
 
 if __name__ == "__main__":
