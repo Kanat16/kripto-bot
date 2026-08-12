@@ -2,7 +2,7 @@ name: 4H Crypto Scanner
 
 on:
   schedule:
-    - cron: "0 */2 * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 jobs:
