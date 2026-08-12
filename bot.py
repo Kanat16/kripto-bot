@@ -6,115 +6,67 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 
-
-# =========================================================
-# ENV
-# =========================================================
-
 load_dotenv()
 
-TELEGRAM_BOT_TOKEN = os.getenv(
-    "TELEGRAM_BOT_TOKEN",
-    ""
-).strip()
-
-TELEGRAM_CHAT_ID = os.getenv(
-    "TELEGRAM_CHAT_ID",
-    ""
-).strip()
-
-TOP_SYMBOLS = int(
-    os.getenv("TOP_SYMBOLS", "100")
-)
-
-MIN_SCORE = int(
-    os.getenv("MIN_SCORE", "4")
-)
-
-VOLUME_MULTIPLIER = float(
-    os.getenv("VOLUME_MULTIPLIER", "1.50")
-)
-
-
 # =========================================================
-# BINANCE SPOT
+# AYARLAR
 # =========================================================
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
+TOP_SYMBOLS = int(os.getenv("TOP_SYMBOLS", "100"))
+MIN_SCORE = int(os.getenv("MIN_SCORE", "4"))
+VOLUME_MULTIPLIER = float(os.getenv("VOLUME_MULTIPLIER", "1.50"))
 
 BASE = "https://data-api.binance.vision"
-
 FUTURES_BASE = "https://fapi.binance.com"
 
 session = requests.Session()
-
-session.headers["User-Agent"] = (
-    "KriptoBot-4H-Spot/1.0"
-)
-
-
-# =========================================================
-# LOGGING
-# =========================================================
+session.headers["User-Agent"] = "KriptoBot-4H/2.0"
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-
 # =========================================================
 # BINANCE API
 # =========================================================
 
 def api_get(path, params=None):
-
     response = session.get(
         BASE + path,
         params=params,
         timeout=20
     )
-
     response.raise_for_status()
-
     return response.json()
 
 
 # =========================================================
-# BINANCE FUTURES FUNDING
+# FUNDING
 # =========================================================
 
 def get_funding_rate(symbol):
-
     try:
-
         response = session.get(
             FUTURES_BASE + "/fapi/v1/premiumIndex",
-            params={
-                "symbol": symbol
-            },
+            params={"symbol": symbol},
             timeout=10
         )
-
         response.raise_for_status()
 
         data = response.json()
 
-        funding = float(
-            data.get(
-                "lastFundingRate",
-                0
-            )
-        )
-
-        return funding
+        return float(data.get("lastFundingRate", 0))
 
     except Exception as error:
-
         logging.warning(
             "%s funding alınamadı: %s",
             symbol,
             error
         )
-
         return None
 
 
@@ -124,14 +76,9 @@ def get_funding_rate(symbol):
 
 def telegram_send(text):
 
-    if (
-        not TELEGRAM_BOT_TOKEN
-        or not TELEGRAM_CHAT_ID
-    ):
-
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN veya "
-            "TELEGRAM_CHAT_ID eksik."
+            "TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID eksik."
         )
 
     url = (
@@ -157,7 +104,6 @@ def telegram_send(text):
 # =========================================================
 
 def ema(series, period):
-
     return series.ewm(
         span=period,
         adjust=False
@@ -168,13 +114,8 @@ def rsi(series, period=14):
 
     delta = series.diff()
 
-    gain = delta.clip(
-        lower=0
-    )
-
-    loss = -delta.clip(
-        upper=0
-    )
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
 
     avg_gain = gain.ewm(
         alpha=1 / period,
@@ -188,28 +129,16 @@ def rsi(series, period=14):
         min_periods=period
     ).mean()
 
-    rs = (
-        avg_gain
-        /
-        avg_loss.replace(
-            0,
-            np.nan
-        )
-    )
+    rs = avg_gain / avg_loss.replace(0, np.nan)
 
-    return 100 - (
-        100 / (1 + rs)
-    )
+    return 100 - (100 / (1 + rs))
 
 
 # =========================================================
-# KLINES
+# KLINES - 4H
 # =========================================================
 
-def get_klines(
-    symbol,
-    limit=100
-):
+def get_klines(symbol, limit=100):
 
     data = api_get(
         "/api/v3/klines",
@@ -250,7 +179,6 @@ def get_klines(
     ]
 
     for column in numeric_columns:
-
         df[column] = pd.to_numeric(
             df[column],
             errors="coerce"
@@ -267,9 +195,7 @@ def get_klines(
 
 def closed_candles(df):
 
-    now = pd.Timestamp.now(
-        tz="UTC"
-    )
+    now = pd.Timestamp.now(tz="UTC")
 
     return df[
         df["close_time"] <= now
@@ -293,19 +219,14 @@ def get_symbols():
         name = symbol["symbol"]
 
         if (
-            symbol.get("status")
-            == "TRADING"
-
-            and symbol.get("quoteAsset")
-            == "USDT"
-
+            symbol.get("status") == "TRADING"
+            and symbol.get("quoteAsset") == "USDT"
             and symbol.get(
                 "isSpotTradingAllowed",
                 True
             )
         ):
 
-            # Kaldıraçlı tokenleri dışarıda bırak
             if any(
                 name.endswith(x)
                 for x in [
@@ -315,7 +236,6 @@ def get_symbols():
                     "BEARUSDT"
                 ]
             ):
-
                 continue
 
             result.append(name)
@@ -323,40 +243,28 @@ def get_symbols():
     return result
 
 
-def get_top_symbols(
-    all_symbols
-):
+def get_top_symbols(all_symbols):
 
     tickers = api_get(
         "/api/v3/ticker/24hr"
     )
 
-    allowed = set(
-        all_symbols
-    )
+    allowed = set(all_symbols)
 
     rows = []
 
     for ticker in tickers:
 
-        symbol = ticker.get(
-            "symbol"
-        )
+        symbol = ticker.get("symbol")
 
         if symbol not in allowed:
             continue
 
         try:
-
             quote_volume = float(
-                ticker.get(
-                    "quoteVolume",
-                    0
-                )
+                ticker.get("quoteVolume", 0)
             )
-
         except Exception:
-
             continue
 
         rows.append(
@@ -379,20 +287,16 @@ def get_top_symbols(
 
 
 # =========================================================
-# BTC TREND FILTER
+# BTC 4H TREND
 # =========================================================
 
 def get_btc_filter():
 
     df = closed_candles(
-        get_klines(
-            "BTCUSDT",
-            100
-        )
+        get_klines("BTCUSDT", 100)
     )
 
     if len(df) < 60:
-
         return {
             "long": False,
             "short": False
@@ -411,20 +315,15 @@ def get_btc_filter():
     current = df.iloc[-1]
 
     return {
+        "long": (
+            current["close"] > current["ema20"]
+            and current["ema20"] > current["ema50"]
+        ),
 
-        "long":
-            current["close"]
-            > current["ema20"]
-
-            and current["ema20"]
-            >= current["ema50"],
-
-        "short":
-            current["close"]
-            < current["ema20"]
-
-            and current["ema20"]
-            <= current["ema50"]
+        "short": (
+            current["close"] < current["ema20"]
+            and current["ema20"] < current["ema50"]
+        )
     }
 
 
@@ -432,16 +331,10 @@ def get_btc_filter():
 # COIN ANALYSIS
 # =========================================================
 
-def analyze(
-    symbol,
-    btc_filter
-):
+def analyze(symbol, btc_filter):
 
     df = closed_candles(
-        get_klines(
-            symbol,
-            100
-        )
+        get_klines(symbol, 100)
     )
 
     if len(df) < 60:
@@ -469,32 +362,26 @@ def analyze(
     )
 
     current = df.iloc[-1]
-
     previous = df.iloc[-2]
 
-    if pd.isna(
-        current["rsi"]
-    ):
-
+    if pd.isna(current["rsi"]):
         return None
 
-    if pd.isna(
-        current["volume_average"]
-    ):
-
+    if pd.isna(current["volume_average"]):
         return None
+
+    # =====================================================
+    # HACİM
+    # =====================================================
 
     volume_ratio = (
         current["volume"]
-        /
-        current["volume_average"]
+        / current["volume_average"]
     )
 
     volume_ok = (
-        volume_ratio
-        >= VOLUME_MULTIPLIER
+        volume_ratio >= VOLUME_MULTIPLIER
     )
-
 
     # =====================================================
     # LONG
@@ -502,28 +389,17 @@ def analyze(
 
     long_rsi = (
         30 <= previous["rsi"] <= 42
-
-        and current["rsi"]
-        > previous["rsi"]
-
-        and current["rsi"] >= 35
+        and current["rsi"] > previous["rsi"]
     )
 
     long_ema = (
-        previous["close"]
-        <= previous["ema20"]
-
-        and current["close"]
-        > current["ema20"]
+        previous["close"] <= previous["ema20"]
+        and current["close"] > current["ema20"]
     )
 
     long_trend = (
-        current["ema20"]
-        > current["ema50"]
-
-        and current["close"]
-        >= current["ema50"]
-        * 0.995
+        current["ema20"] > current["ema50"]
+        and current["close"] > current["ema50"]
     )
 
     resistance = (
@@ -535,8 +411,7 @@ def analyze(
     )
 
     resistance_break = (
-        current["close"]
-        > resistance
+        current["close"] > resistance
     )
 
     long_score = sum([
@@ -547,35 +422,23 @@ def analyze(
         resistance_break
     ])
 
-
     # =====================================================
     # SHORT
     # =====================================================
 
     short_rsi = (
         58 <= previous["rsi"] <= 70
-
-        and current["rsi"]
-        < previous["rsi"]
-
-        and current["rsi"] <= 65
+        and current["rsi"] < previous["rsi"]
     )
 
     short_ema = (
-        previous["close"]
-        >= previous["ema20"]
-
-        and current["close"]
-        < current["ema20"]
+        previous["close"] >= previous["ema20"]
+        and current["close"] < current["ema20"]
     )
 
     short_trend = (
-        current["ema20"]
-        < current["ema50"]
-
-        and current["close"]
-        <= current["ema50"]
-        * 1.005
+        current["ema20"] < current["ema50"]
+        and current["close"] < current["ema50"]
     )
 
     support = (
@@ -587,8 +450,7 @@ def analyze(
     )
 
     support_break = (
-        current["close"]
-        < support
+        current["close"] < support
     )
 
     short_score = sum([
@@ -599,191 +461,88 @@ def analyze(
         support_break
     ])
 
-
     # =====================================================
-    # DIRECTION
+    # SİNYAL
     # =====================================================
 
     direction = None
-
     score = 0
-
     level = None
 
     if (
         btc_filter["long"]
-
         and long_score >= MIN_SCORE
-
         and long_score > short_score
     ):
 
         direction = "LONG"
-
         score = long_score
-
         level = resistance
 
     elif (
         btc_filter["short"]
-
         and short_score >= MIN_SCORE
-
         and short_score > long_score
     ):
 
         direction = "SHORT"
-
         score = short_score
-
         level = support
 
     if direction is None:
-
         return None
-
 
     # =====================================================
     # FUNDING
     # =====================================================
 
-    funding_rate = get_funding_rate(
-        symbol
-    )
-
-
-    # =====================================================
-    # SIGNAL
-    # =====================================================
+    funding_rate = get_funding_rate(symbol)
 
     return {
-
         "symbol": symbol,
-
         "direction": direction,
-
         "score": score,
-
-        "price":
-            float(
-                current["close"]
-            ),
-
-        "rsi_previous":
-            float(
-                previous["rsi"]
-            ),
-
-        "rsi":
-            float(
-                current["rsi"]
-            ),
-
-        "volume_percent":
-            (
-                volume_ratio - 1
-            ) * 100,
-
-        "level":
-            float(level),
-
-        "funding_rate":
-            funding_rate,
-
-        "candle":
-            current[
-                "close_time"
-            ].isoformat()
+        "price": float(current["close"]),
+        "rsi_previous": float(previous["rsi"]),
+        "rsi": float(current["rsi"]),
+        "volume_percent": (volume_ratio - 1) * 100,
+        "level": float(level),
+        "funding_rate": funding_rate,
+        "candle": current["close_time"].isoformat()
     }
 
 
 # =========================================================
-# TELEGRAM MESSAGE
+# TELEGRAM MESAJI
 # =========================================================
 
-def format_signal(
-    signal
-):
+def format_signal(signal):
 
     is_long = (
-        signal["direction"]
-        == "LONG"
+        signal["direction"] == "LONG"
     )
 
-    emoji = (
-        "🟢"
-        if is_long
-        else "🔴"
-    )
-
-    arrow = (
-        "↗️"
-        if is_long
-        else "↘️"
-    )
+    emoji = "🟢" if is_long else "🔴"
+    arrow = "↗️" if is_long else "↘️"
 
     funding = signal.get(
         "funding_rate"
     )
 
-
-    # =====================================================
-    # FUNDING COMMENT
-    # =====================================================
-
     if funding is None:
 
         funding_text = (
-            "💵 Funding: "
-            "Alınamadı ⚪"
+            "💵 Funding: Alınamadı ⚪"
         )
 
     else:
 
-        funding_percent = (
-            funding * 100
+        funding_percent = funding * 100
+
+        funding_text = (
+            f"💵 Funding: "
+            f"{funding_percent:+.4f}%"
         )
-
-        if funding_percent >= 0.05:
-
-            funding_text = (
-                f"💵 Funding: "
-                f"+{funding_percent:.4f}% 🔥\n"
-                f"⚠️ Longlar çok kalabalık"
-            )
-
-        elif funding_percent >= 0.01:
-
-            funding_text = (
-                f"💵 Funding: "
-                f"+{funding_percent:.4f}% 🟡\n"
-                f"ℹ️ Longlar ödeme yapıyor"
-            )
-
-        elif funding_percent <= -0.05:
-
-            funding_text = (
-                f"💵 Funding: "
-                f"{funding_percent:.4f}% 🔥\n"
-                f"⚠️ Shortlar çok kalabalık"
-            )
-
-        elif funding_percent <= -0.01:
-
-            funding_text = (
-                f"💵 Funding: "
-                f"{funding_percent:.4f}% 🟡\n"
-                f"ℹ️ Shortlar ödeme yapıyor"
-            )
-
-        else:
-
-            funding_text = (
-                f"💵 Funding: "
-                f"{funding_percent:.4f}% ⚪\n"
-                f"ℹ️ Normal"
-            )
-
 
     level_name = (
         "Direnç"
@@ -791,21 +550,11 @@ def format_signal(
         else "Destek"
     )
 
-
-    # =====================================================
-    # MESSAGE
-    # =====================================================
-
     return (
+        f"{emoji} {signal['direction']} ADAYI\n\n"
 
-        f"{emoji} "
-        f"{signal['direction']} ADAYI\n\n"
-
-        f"🪙 Coin: "
-        f"{signal['symbol']}\n"
-
-        f"💰 Fiyat: "
-        f"{signal['price']:.8g}\n\n"
+        f"🪙 Coin: {signal['symbol']}\n"
+        f"💰 Fiyat: {signal['price']:.8g}\n\n"
 
         f"📊 RSI: "
         f"{signal['rsi_previous']:.1f}"
@@ -817,8 +566,7 @@ def format_signal(
         f"{'ÜSTÜNE' if is_long else 'ALTINA'} "
         f"4H KAPANIŞ ✅\n"
 
-        f"📈 EMA50 trend filtresi: "
-        f"✅\n"
+        f"📈 EMA50 Trend: ✅\n"
 
         f"🔊 Hacim: "
         f"+{signal['volume_percent']:.0f}% 🔥\n\n"
@@ -831,8 +579,7 @@ def format_signal(
         f"📊 Skor: "
         f"{signal['score']}/5\n\n"
 
-        f"⏱ Zaman dilimi: "
-        f"4H\n\n"
+        f"⏱ Zaman Dilimi: 4H\n\n"
 
         f"⚠️ SADECE ADAY SİNYALİ\n"
         f"Grafiği kontrol et.\n"
@@ -869,8 +616,7 @@ def scan():
     btc_filter = get_btc_filter()
 
     logging.info(
-        "BTC trend filtresi: "
-        "LONG=%s SHORT=%s",
+        "BTC 4H trend: LONG=%s SHORT=%s",
         btc_filter["long"],
         btc_filter["short"]
     )
@@ -880,7 +626,6 @@ def scan():
     for symbol in watchlist:
 
         if symbol == "BTCUSDT":
-
             continue
 
         try:
@@ -892,13 +637,10 @@ def scan():
 
             if signal:
 
-                signals.append(
-                    signal
-                )
+                signals.append(signal)
 
                 logging.info(
-                    "Sinyal bulundu: "
-                    "%s %s %d/5",
+                    "SİNYAL: %s %s %d/5",
                     signal["symbol"],
                     signal["direction"],
                     signal["score"]
@@ -914,9 +656,8 @@ def scan():
 
         time.sleep(0.08)
 
-
     # =====================================================
-    # SEND TELEGRAM
+    # TELEGRAM
     # =====================================================
 
     if signals:
@@ -931,33 +672,24 @@ def scan():
             try:
 
                 telegram_send(
-                    format_signal(
-                        signal
-                    )
+                    format_signal(signal)
                 )
 
             except Exception as error:
 
                 logging.error(
-                    "Telegram gönderim "
-                    "hatası: %s",
+                    "Telegram gönderim hatası: %s",
                     error
                 )
 
     else:
 
-        # Aday yoksa Telegram'a
-        # HİÇBİR MESAJ GÖNDERİLMEZ.
-
         logging.info(
-            "Aday bulunamadı. "
-            "Telegram mesajı gönderilmeyecek."
+            "Aday bulunamadı. Telegram mesajı gönderilmeyecek."
         )
 
-
     logging.info(
-        "Tarama tamamlandı. "
-        "Sinyal sayısı: %d",
+        "Tarama tamamlandı. Sinyal sayısı: %d",
         len(signals)
     )
 
@@ -974,21 +706,15 @@ def main():
     ):
 
         raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN veya "
-            "TELEGRAM_CHAT_ID eksik."
+            "TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID eksik."
         )
 
     logging.info(
-        "Kripto Bot başladı."
+        "4H Kripto Bot başladı."
     )
 
     scan()
 
 
-# =========================================================
-# START
-# =========================================================
-
 if __name__ == "__main__":
-
     main()
