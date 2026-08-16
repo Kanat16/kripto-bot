@@ -629,7 +629,7 @@ print(
 messages_sent = 0
 
 if send_alerts:
-       for item in long_candidates[:5]:
+    for item in long_candidates[:5]:
 
         # BTC SHORT ise LONG sinyalini engelle
         if btc_short and not btc_long:
