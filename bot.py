@@ -608,11 +608,28 @@ def main():
     #
     # 30 dakikada bir tarama devam eder.
     # Ancak sinyal sadece yeni kapanmış 4H mumda oluştuğunda
-    # Telegram'a gönderilir.
+  
+
+now_utc = datetime.now(timezone.utc)
+
+# 4H mum kapanış saatleri: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
+# Sadece bu zamanlarda Telegram sinyali gönder.
+send_alerts = (
+    now_utc.minute < 15
+    and now_utc.hour % 4 == 0
+)
+
+print(
+    f"Telegram bildirim zamanı: {send_alerts} | "
+    f"UTC: {now_utc.strftime('%Y-%m-%d %H:%M')}"
+)
+
+
 
     messages_sent = 0
 
-    for item in long_candidates[:5]:
+    if send_alerts:
+       for item in long_candidates[:5]:
 
         # BTC SHORT ise LONG sinyalini engelle
         if btc_short and not btc_long:
@@ -626,7 +643,8 @@ def main():
         if telegram_send(message):
             messages_sent += 1
 
-    for item in short_candidates[:5]:
+    if send_alerts:
+       for item in short_candidates[:5]:
 
         # BTC LONG ise SHORT sinyalini engelle
         if btc_long and not btc_short:
