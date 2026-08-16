@@ -624,7 +624,7 @@ print(
     f"UTC: {now_utc.strftime('%Y-%m-%d %H:%M')}"
 )
 
-    messages_sent = 0
+messages_sent = 0
 
     if send_alerts:
        for item in long_candidates[:5]:
