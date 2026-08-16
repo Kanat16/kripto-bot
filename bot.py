@@ -624,12 +624,12 @@ print(
     f"UTC: {now_utc.strftime('%Y-%m-%d %H:%M')}"
 )
 
-
-
 messages_sent = 0
 
 if send_alerts:
     for item in long_candidates[:5]:
+
+         
 
         # BTC SHORT ise LONG sinyalini engelle
         if btc_short and not btc_long:
