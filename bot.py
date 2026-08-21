@@ -21,7 +21,7 @@ FUTURES_BASE = "https://fapi.binance.com"
 session = requests.Session()
 
 session.headers.update({
-    "User-Agent": "KriptoBot-1H/6.0"
+    "User-Agent": "KriptoBot-1H/7.0"
 })
 
 
@@ -99,7 +99,7 @@ def get_symbols():
 
     symbols = []
 
-    # Stablecoin / düşük hareketli pariteler
+    # Stablecoin ve uygun olmayan varlıklar
     excluded_assets = {
         "USDT",
         "USDC",
@@ -127,7 +127,6 @@ def get_symbols():
 
         base_asset = item["baseAsset"]
 
-        # Stablecoinleri çıkar
         if base_asset in excluded_assets:
             continue
 
@@ -410,10 +409,6 @@ def analyze_symbol(
 
         previous = df.iloc[-3]
 
-        # ----------------------------------------------------
-        # RSI DEĞERİ GEÇERLİ Mİ?
-        # ----------------------------------------------------
-
         if pd.isna(last["rsi"]):
 
             return None
@@ -428,107 +423,97 @@ def analyze_symbol(
         # LONG RSI
         # ====================================================
 
-        # RSI 70 ve üzerindeyse LONG YOK
-        if last["rsi"] >= 70:
+        # RSI 55 üzerindeyse LONG YOK
+        if last["rsi"] > 55:
 
-            return {
-                "symbol": symbol,
-                "price": float(last["close"]),
-                "rsi": float(last["rsi"]),
-                "long_score": -99,
-                "short_score": 0,
-                "funding": get_funding_rate(symbol),
-                "candle_time": last["open_time"],
-                "long_reasons": [],
-                "short_reasons": []
-            }
+            long_score = -99
 
-        # RSI 30-40 = güçlü LONG avantajı
-        if 30 <= last["rsi"] <= 40:
+            long_reasons = []
 
-            long_score += 2
+        else:
 
-            long_reasons.append(
-                "RSI 30-40 dip bölgesinde"
-            )
+            # RSI 30-40 = güçlü LONG
+            if 30 <= last["rsi"] <= 40:
 
-        # RSI 40-50 = kabul edilebilir
-        elif 40 < last["rsi"] <= 50:
+                long_score += 2
 
-            long_score += 1
+                long_reasons.append(
+                    "RSI 30-40 dip bölgesinde"
+                )
 
-            long_reasons.append(
-                "RSI toparlanma bölgesinde"
-            )
+            # RSI 40-55 = toparlanma bölgesi
+            elif 40 < last["rsi"] <= 55:
 
-        # RSI aşağıdan yukarı dönüyor
-        if (
-            previous["rsi"] < 40
-            and
-            last["rsi"] > previous["rsi"]
-        ):
+                long_score += 1
 
-            long_score += 1
+                long_reasons.append(
+                    "RSI 40-55 toparlanma bölgesinde"
+                )
 
-            long_reasons.append(
-                "RSI yukarı dönüyor"
-            )
+            # RSI yukarı dönüyor
+            if (
+                previous["rsi"] < 40
+                and
+                last["rsi"] > previous["rsi"]
+            ):
+
+                long_score += 1
+
+                long_reasons.append(
+                    "RSI yukarı dönüyor"
+                )
 
         # ====================================================
         # SHORT RSI
         # ====================================================
 
-        # RSI 30 altındaysa SHORT YOK
-        if last["rsi"] <= 30:
+        # RSI 45 altındaysa SHORT YOK
+        if last["rsi"] < 45:
 
-            return {
-                "symbol": symbol,
-                "price": float(last["close"]),
-                "rsi": float(last["rsi"]),
-                "long_score": long_score,
-                "short_score": -99,
-                "funding": get_funding_rate(symbol),
-                "candle_time": last["open_time"],
-                "long_reasons": long_reasons,
-                "short_reasons": []
-            }
+            short_score = -99
 
-        # RSI 60-70 = SHORT avantajı
-        if 60 <= last["rsi"] <= 70:
+            short_reasons = []
 
-            short_score += 2
+        else:
 
-            short_reasons.append(
-                "RSI 60-70 yüksek bölgesinde"
-            )
+            # RSI 60-70 = güçlü SHORT
+            if 60 <= last["rsi"] <= 70:
 
-        # RSI 50-60 = zayıf SHORT
-        elif 50 <= last["rsi"] < 60:
+                short_score += 2
 
-            short_score += 1
+                short_reasons.append(
+                    "RSI 60-70 yüksek bölgesinde"
+                )
 
-            short_reasons.append(
-                "RSI aşağı dönüş bölgesinde"
-            )
+            # RSI 45-60 = aşağı dönüş bölgesi
+            elif 45 <= last["rsi"] < 60:
 
-        # RSI yukarıdan aşağı dönüyor
-        if (
-            previous["rsi"] > 60
-            and
-            last["rsi"] < previous["rsi"]
-        ):
+                short_score += 1
 
-            short_score += 1
+                short_reasons.append(
+                    "RSI 45-60 aşağı dönüş bölgesinde"
+                )
 
-            short_reasons.append(
-                "RSI aşağı dönüyor"
-            )
+            # RSI aşağı dönüyor
+            if (
+                previous["rsi"] > 60
+                and
+                last["rsi"] < previous["rsi"]
+            ):
+
+                short_score += 1
+
+                short_reasons.append(
+                    "RSI aşağı dönüyor"
+                )
 
         # ====================================================
         # EMA20 LONG
         # ====================================================
 
         if (
+            long_score >= 0
+            and
             previous["close"] <= previous["ema20"]
             and
             last["close"] > last["ema20"]
@@ -545,6 +530,8 @@ def analyze_symbol(
         # ====================================================
 
         if (
+            short_score >= 0
+            and
             previous["close"] >= previous["ema20"]
             and
             last["close"] < last["ema20"]
@@ -560,7 +547,11 @@ def analyze_symbol(
         # EMA20 / EMA50 TREND
         # ====================================================
 
-        if last["ema20"] > last["ema50"]:
+        if (
+            long_score >= 0
+            and
+            last["ema20"] > last["ema50"]
+        ):
 
             long_score += 1
 
@@ -568,7 +559,11 @@ def analyze_symbol(
                 "EMA20 > EMA50"
             )
 
-        if last["ema20"] < last["ema50"]:
+        if (
+            short_score >= 0
+            and
+            last["ema20"] < last["ema50"]
+        ):
 
             short_score += 1
 
@@ -580,7 +575,11 @@ def analyze_symbol(
         # MACD LONG
         # ====================================================
 
-        if last["macd"] > last["macd_signal"]:
+        if (
+            long_score >= 0
+            and
+            last["macd"] > last["macd_signal"]
+        ):
 
             long_score += 1
 
@@ -590,6 +589,8 @@ def analyze_symbol(
 
         # MACD yukarı kesişim
         if (
+            long_score >= 0
+            and
             previous["macd"] <= previous["macd_signal"]
             and
             last["macd"] > last["macd_signal"]
@@ -605,7 +606,11 @@ def analyze_symbol(
         # MACD SHORT
         # ====================================================
 
-        if last["macd"] < last["macd_signal"]:
+        if (
+            short_score >= 0
+            and
+            last["macd"] < last["macd_signal"]
+        ):
 
             short_score += 1
 
@@ -615,6 +620,8 @@ def analyze_symbol(
 
         # MACD aşağı kesişim
         if (
+            short_score >= 0
+            and
             previous["macd"] >= previous["macd_signal"]
             and
             last["macd"] < last["macd_signal"]
@@ -639,8 +646,12 @@ def analyze_symbol(
 
         if volume_strong:
 
-            # Yükseliş mumu + güçlü hacim
-            if last["close"] > last["open"]:
+            # Güçlü yükseliş hacmi
+            if (
+                long_score >= 0
+                and
+                last["close"] > last["open"]
+            ):
 
                 long_score += 1
 
@@ -648,8 +659,12 @@ def analyze_symbol(
                     "Yükseliş hacmi güçlü"
                 )
 
-            # Düşüş mumu + güçlü hacim
-            elif last["close"] < last["open"]:
+            # Güçlü düşüş hacmi
+            elif (
+                short_score >= 0
+                and
+                last["close"] < last["open"]
+            ):
 
                 short_score += 1
 
@@ -661,7 +676,12 @@ def analyze_symbol(
         # BTC TREND FİLTRESİ
         # ====================================================
 
-        if btc_long:
+        # BTC LONG -> LONG'a destek
+        if (
+            long_score >= 0
+            and
+            btc_long
+        ):
 
             long_score += 1
 
@@ -669,14 +689,19 @@ def analyze_symbol(
                 "BTC 1H trend LONG"
             )
 
-        # BTC SHORT ise LONG'A ENGEL
+        # BTC SHORT -> LONG ENGEL
         if btc_short:
 
             long_score = -99
 
             long_reasons = []
 
-        if btc_short:
+        # BTC SHORT -> SHORT'a destek
+        if (
+            short_score >= 0
+            and
+            btc_short
+        ):
 
             short_score += 1
 
@@ -684,7 +709,7 @@ def analyze_symbol(
                 "BTC 1H trend SHORT"
             )
 
-        # BTC LONG ise SHORT'A ENGEL
+        # BTC LONG -> SHORT ENGEL
         if btc_long:
 
             short_score = -99
@@ -802,11 +827,7 @@ def is_1h_notification_window():
         timezone.utc
     )
 
-    # 00:00 - 00:29
-    # 01:00 - 01:29
-    # 02:00 - 02:29
-    # vb.
-
+    # Saat başındaki ilk 30 dakika
     return now.minute < 30
 
 
@@ -841,7 +862,7 @@ def main():
         )
 
     # --------------------------------------------------------
-    # COINLER
+    # COIN LISTESI
     # --------------------------------------------------------
 
     print(
@@ -904,7 +925,6 @@ def main():
 
             continue
 
-        # LONG
         if (
             result["long_score"]
             >= MIN_SCORE
@@ -914,7 +934,6 @@ def main():
                 result
             )
 
-        # SHORT
         if (
             result["short_score"]
             >= MIN_SCORE
@@ -939,7 +958,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # SONUÇLAR
+    # LONG ADAYLARI
     # --------------------------------------------------------
 
     print()
@@ -956,6 +975,10 @@ def main():
             f"SKOR={item['long_score']} "
             f"RSI={item['rsi']:.2f}"
         )
+
+    # --------------------------------------------------------
+    # SHORT ADAYLARI
+    # --------------------------------------------------------
 
     print()
 
@@ -992,7 +1015,7 @@ def main():
     if notification_window:
 
         # ----------------------------------------------------
-        # LONG
+        # EN FAZLA 5 LONG
         # ----------------------------------------------------
 
         for item in long_candidates[:5]:
@@ -1009,7 +1032,7 @@ def main():
                 messages_sent += 1
 
         # ----------------------------------------------------
-        # SHORT
+        # EN FAZLA 5 SHORT
         # ----------------------------------------------------
 
         for item in short_candidates[:5]:
@@ -1033,7 +1056,7 @@ def main():
         )
 
     # --------------------------------------------------------
-    # BİTİŞ
+    # SONUÇ
     # --------------------------------------------------------
 
     print()
@@ -1051,7 +1074,7 @@ def main():
 
 
 # ============================================================
-# ÇALIŞTIR
+# PROGRAMI BAŞLAT
 # ============================================================
 
 if __name__ == "__main__":
