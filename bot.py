@@ -20,7 +20,7 @@ FUTURES_BASE = "https://fapi.binance.com"
 
 session = requests.Session()
 session.headers.update({
-    "User-Agent": "KriptoBot-4H/4.0"
+    "User-Agent": "KriptoBot-1H/5.0"
 })
 
 
@@ -29,12 +29,15 @@ session.headers.update({
 # ============================================================
 
 def api_get(url, params=None):
+
     response = session.get(
         url,
         params=params,
         timeout=20
     )
+
     response.raise_for_status()
+
     return response.json()
 
 
@@ -43,8 +46,11 @@ def api_get(url, params=None):
 # ============================================================
 
 def telegram_send(message):
+
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+
         print("Telegram bilgileri eksik.")
+
         return False
 
     url = (
@@ -60,18 +66,23 @@ def telegram_send(message):
     }
 
     try:
+
         response = session.post(
             url,
             data=data,
             timeout=20
         )
+
         response.raise_for_status()
 
         print("Telegram mesajı gönderildi.")
+
         return True
 
     except Exception as e:
+
         print("Telegram hatası:", e)
+
         return False
 
 
@@ -95,7 +106,10 @@ def get_symbols():
         if item["quoteAsset"] != "USDT":
             continue
 
-        if not item.get("isSpotTradingAllowed", False):
+        if not item.get(
+            "isSpotTradingAllowed",
+            False
+        ):
             continue
 
         symbols.append(item["symbol"])
@@ -114,6 +128,7 @@ def get_top_symbols(symbols):
     )
 
     allowed = set(symbols)
+
     volumes = {}
 
     for item in data:
@@ -124,10 +139,13 @@ def get_top_symbols(symbols):
             continue
 
         try:
+
             volumes[symbol] = float(
                 item["quoteVolume"]
             )
+
         except (TypeError, ValueError):
+
             continue
 
     sorted_symbols = sorted(
@@ -140,16 +158,19 @@ def get_top_symbols(symbols):
 
 
 # ============================================================
-# 4H KLINE
+# 1H KLINE
 # ============================================================
 
-def get_klines(symbol, limit=150):
+def get_klines(
+    symbol,
+    limit=150
+):
 
     data = api_get(
         f"{BASE}/api/v3/klines",
         {
             "symbol": symbol,
-            "interval": "4h",
+            "interval": "1h",
             "limit": limit
         }
     )
@@ -183,6 +204,7 @@ def get_klines(symbol, limit=150):
     ]
 
     for column in numeric_columns:
+
         df[column] = pd.to_numeric(
             df[column],
             errors="coerce"
@@ -202,26 +224,45 @@ def get_klines(symbol, limit=150):
 
 def calculate_indicators(df):
 
+    # --------------------------------------------------------
     # EMA20
+    # --------------------------------------------------------
+
     df["ema20"] = df["close"].ewm(
         span=20,
         adjust=False
     ).mean()
 
+    # --------------------------------------------------------
     # EMA50
+    # --------------------------------------------------------
+
     df["ema50"] = df["close"].ewm(
         span=50,
         adjust=False
     ).mean()
 
+    # --------------------------------------------------------
     # RSI14
+    # --------------------------------------------------------
+
     delta = df["close"].diff()
 
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
+    gain = delta.clip(
+        lower=0
+    )
 
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
+    loss = -delta.clip(
+        upper=0
+    )
+
+    avg_gain = gain.rolling(
+        14
+    ).mean()
+
+    avg_loss = loss.rolling(
+        14
+    ).mean()
 
     rs = avg_gain / avg_loss.replace(
         0,
@@ -232,7 +273,10 @@ def calculate_indicators(df):
         100 / (1 + rs)
     )
 
+    # --------------------------------------------------------
     # MACD
+    # --------------------------------------------------------
+
     ema12 = df["close"].ewm(
         span=12,
         adjust=False
@@ -243,14 +287,19 @@ def calculate_indicators(df):
         adjust=False
     ).mean()
 
-    df["macd"] = ema12 - ema26
+    df["macd"] = (
+        ema12 - ema26
+    )
 
     df["macd_signal"] = df["macd"].ewm(
         span=9,
         adjust=False
     ).mean()
 
-    # Ortalama hacim
+    # --------------------------------------------------------
+    # HACİM ORTALAMASI
+    # --------------------------------------------------------
+
     df["volume_avg"] = df["volume"].rolling(
         20
     ).mean()
@@ -271,7 +320,7 @@ def get_btc_trend():
 
     df = calculate_indicators(df)
 
-    # Son kapanmış 4H mum
+    # SON KAPANMIŞ 1H MUM
     last = df.iloc[-2]
 
     long_trend = (
@@ -312,6 +361,7 @@ def get_funding_rate(symbol):
         ) * 100
 
     except Exception:
+
         return 0.0
 
 
@@ -328,24 +378,33 @@ def analyze_symbol(
     try:
 
         df = get_klines(symbol)
+
         df = calculate_indicators(df)
 
-        # Sadece kapanmış mum
+        # ----------------------------------------------------
+        # SADECE KAPANMIŞ MUM
+        # ----------------------------------------------------
+
         last = df.iloc[-2]
+
         previous = df.iloc[-3]
 
         long_score = 0
+
         short_score = 0
 
         long_reasons = []
+
         short_reasons = []
 
         # ----------------------------------------------------
-        # RSI
+        # RSI LONG
         # ----------------------------------------------------
 
         if 30 <= last["rsi"] <= 40:
+
             long_score += 1
+
             long_reasons.append(
                 "RSI 30-40 bölgesinde"
             )
@@ -355,13 +414,21 @@ def analyze_symbol(
             and
             last["rsi"] > previous["rsi"]
         ):
+
             long_score += 1
+
             long_reasons.append(
                 "RSI yukarı dönüyor"
             )
 
+        # ----------------------------------------------------
+        # RSI SHORT
+        # ----------------------------------------------------
+
         if last["rsi"] >= 60:
+
             short_score += 1
+
             short_reasons.append(
                 "RSI yüksek"
             )
@@ -371,13 +438,15 @@ def analyze_symbol(
             and
             last["rsi"] < previous["rsi"]
         ):
+
             short_score += 1
+
             short_reasons.append(
                 "RSI aşağı dönüyor"
             )
 
         # ----------------------------------------------------
-        # EMA20
+        # EMA20 KIRILIMI LONG
         # ----------------------------------------------------
 
         if (
@@ -385,46 +454,69 @@ def analyze_symbol(
             and
             last["close"] > last["ema20"]
         ):
+
             long_score += 1
+
             long_reasons.append(
                 "EMA20 yukarı kırıldı"
             )
+
+        # ----------------------------------------------------
+        # EMA20 KIRILIMI SHORT
+        # ----------------------------------------------------
 
         if (
             previous["close"] >= previous["ema20"]
             and
             last["close"] < last["ema20"]
         ):
+
             short_score += 1
+
             short_reasons.append(
                 "EMA20 aşağı kırıldı"
             )
 
-        # EMA20 / EMA50 trend
+        # ----------------------------------------------------
+        # EMA20 / EMA50 TREND
+        # ----------------------------------------------------
+
         if last["ema20"] > last["ema50"]:
+
             long_score += 1
+
             long_reasons.append(
                 "EMA20 > EMA50"
             )
 
         if last["ema20"] < last["ema50"]:
+
             short_score += 1
+
             short_reasons.append(
                 "EMA20 < EMA50"
             )
 
         # ----------------------------------------------------
-        # MACD
+        # MACD LONG
         # ----------------------------------------------------
 
         if last["macd"] > last["macd_signal"]:
+
             long_score += 1
+
             long_reasons.append(
                 "MACD pozitif"
             )
 
+        # ----------------------------------------------------
+        # MACD SHORT
+        # ----------------------------------------------------
+
         if last["macd"] < last["macd_signal"]:
+
             short_score += 1
+
             short_reasons.append(
                 "MACD negatif"
             )
@@ -440,32 +532,47 @@ def analyze_symbol(
         )
 
         if volume_strong:
-            long_score += 1
-            short_score += 1
 
-            long_reasons.append(
-                "Hacim güçlü"
-            )
+            # Mum yönüne göre hacim puanı
+            if last["close"] > last["open"]:
 
-            short_reasons.append(
-                "Hacim güçlü"
-            )
+                long_score += 1
+
+                long_reasons.append(
+                    "Yükseliş hacmi güçlü"
+                )
+
+            elif last["close"] < last["open"]:
+
+                short_score += 1
+
+                short_reasons.append(
+                    "Düşüş hacmi güçlü"
+                )
 
         # ----------------------------------------------------
         # BTC TREND FİLTRESİ
         # ----------------------------------------------------
 
         if btc_long:
+
             long_score += 1
+
             long_reasons.append(
                 "BTC trend LONG"
             )
 
         if btc_short:
+
             short_score += 1
+
             short_reasons.append(
                 "BTC trend SHORT"
             )
+
+        # ----------------------------------------------------
+        # FUNDING
+        # ----------------------------------------------------
 
         funding = get_funding_rate(symbol)
 
@@ -502,25 +609,38 @@ def format_signal(
     if direction == "LONG":
 
         title = "🟢 GÜÇLÜ LONG ADAYI"
+
         score = item["long_score"]
+
         reasons = item["long_reasons"]
 
     else:
 
         title = "🔴 GÜÇLÜ SHORT ADAYI"
+
         score = item["short_score"]
+
         reasons = item["short_reasons"]
 
     funding = item["funding"]
 
     if funding >= 0.05:
-        funding_text = "⚠️ Longlar çok kalabalık"
+
+        funding_text = (
+            "⚠️ Longlar çok kalabalık"
+        )
 
     elif funding <= -0.05:
-        funding_text = "⚠️ Shortlar çok kalabalık"
+
+        funding_text = (
+            "⚠️ Shortlar çok kalabalık"
+        )
 
     else:
-        funding_text = "⚪ Funding dengeli"
+
+        funding_text = (
+            "⚪ Funding dengeli"
+        )
 
     message = (
         f"<b>{title}</b>\n\n"
@@ -534,10 +654,13 @@ def format_signal(
     )
 
     for reason in reasons:
-        message += f"• {reason}\n"
+
+        message += (
+            f"• {reason}\n"
+        )
 
     message += (
-        f"\n<b>4H Mum:</b> "
+        f"\n<b>1H Mum:</b> "
         f"{item['candle_time'].strftime('%Y-%m-%d %H:%M')}\n\n"
         "⚠️ Bu bir işlem emri değil, "
         "teknik tarama sinyalidir."
@@ -547,26 +670,55 @@ def format_signal(
 
 
 # ============================================================
+# 1H BİLDİRİM PENCERESİ
+# ============================================================
+
+def is_1h_notification_window():
+
+    now = datetime.now(
+        timezone.utc
+    )
+
+    # Saat başındaki ilk 30 dakika
+    #
+    # Örnek:
+    # 12:00 -> bildirim
+    # 12:30 -> bildirim yok
+    # 13:00 -> bildirim
+    #
+
+    return now.minute < 30
+
+
+# ============================================================
 # ANA PROGRAM
 # ============================================================
 
 def main():
 
     print("=" * 60)
-    print("4H KRIPTO BOT BASLIYOR")
+
+    print(
+        "1H KRIPTO BOT BASLIYOR"
+    )
+
     print("=" * 60)
 
     if not TELEGRAM_BOT_TOKEN:
+
         print(
             "UYARI: TELEGRAM_BOT_TOKEN bulunamadı."
         )
 
     if not TELEGRAM_CHAT_ID:
+
         print(
             "UYARI: TELEGRAM_CHAT_ID bulunamadı."
         )
 
-    print("Coin listesi alınıyor...")
+    print(
+        "Coin listesi alınıyor..."
+    )
 
     symbols = get_symbols()
 
@@ -575,23 +727,34 @@ def main():
         len(symbols)
     )
 
-    top_symbols = get_top_symbols(symbols)
+    top_symbols = get_top_symbols(
+        symbols
+    )
 
     print(
         f"En yüksek hacimli "
         f"{len(top_symbols)} coin taranacak."
     )
 
+    # --------------------------------------------------------
+    # BTC TREND
+    # --------------------------------------------------------
+
     btc_long, btc_short = get_btc_trend()
 
     print(
-        f"BTC 4H trend: "
+        f"BTC 1H trend: "
         f"LONG={btc_long} "
         f"SHORT={btc_short}"
     )
 
     long_candidates = []
+
     short_candidates = []
+
+    # --------------------------------------------------------
+    # TARAMA
+    # --------------------------------------------------------
 
     for index, symbol in enumerate(
         top_symbols,
@@ -599,7 +762,8 @@ def main():
     ):
 
         print(
-            f"[{index}/{len(top_symbols)}] {symbol}"
+            f"[{index}/{len(top_symbols)}] "
+            f"{symbol}"
         )
 
         result = analyze_symbol(
@@ -609,13 +773,26 @@ def main():
         )
 
         if result is None:
+
             continue
 
-        if result["long_score"] >= MIN_SCORE:
-            long_candidates.append(result)
+        if (
+            result["long_score"]
+            >= MIN_SCORE
+        ):
 
-        if result["short_score"] >= MIN_SCORE:
-            short_candidates.append(result)
+            long_candidates.append(
+                result
+            )
+
+        if (
+            result["short_score"]
+            >= MIN_SCORE
+        ):
+
+            short_candidates.append(
+                result
+            )
 
     # --------------------------------------------------------
     # SIRALAMA
@@ -632,12 +809,14 @@ def main():
     )
 
     print()
+
     print(
         "LONG ADAYLARI:",
         len(long_candidates)
     )
 
     for item in long_candidates:
+
         print(
             f"{item['symbol']:12} "
             f"SKOR={item['long_score']} "
@@ -645,12 +824,14 @@ def main():
         )
 
     print()
+
     print(
         "SHORT ADAYLARI:",
         len(short_candidates)
     )
 
     for item in short_candidates:
+
         print(
             f"{item['symbol']:12} "
             f"SKOR={item['short_score']} "
@@ -661,37 +842,25 @@ def main():
     # TELEGRAM
     # --------------------------------------------------------
 
-    # Sinyal gönderimini sadece 4H kapanışına yakın
-    # 30 dakikalık çalıştırmada yapıyoruz.
-    #
-    # UTC kapanışları:
-    # 00:00 / 04:00 / 08:00 / 12:00 /
-    # 16:00 / 20:00
-    #
-    # GitHub Actions'ın 30 dakikalık çalışması nedeniyle
-    # ilk 30 dakikalık pencere kabul edilir.
-
-    now = datetime.now(timezone.utc)
-
-    current_hour = now.hour
-    current_minute = now.minute
-
-    is_4h_window = (
-        current_hour % 4 == 0
-        and
-        current_minute < 30
+    notification_window = (
+        is_1h_notification_window()
     )
 
+    print()
+
     print(
-        "Telegram bildirim penceresi:",
-        is_4h_window
+        "1H bildirim penceresi:",
+        notification_window
     )
 
     messages_sent = 0
 
-    if is_4h_window:
+    if notification_window:
 
-        # BTC SHORT ise LONG gönderme
+        # ----------------------------------------------------
+        # LONG
+        # ----------------------------------------------------
+
         if not btc_short or btc_long:
 
             for item in long_candidates[:5]:
@@ -701,10 +870,16 @@ def main():
                     "LONG"
                 )
 
-                if telegram_send(message):
+                if telegram_send(
+                    message
+                ):
+
                     messages_sent += 1
 
-        # BTC LONG ise SHORT gönderme
+        # ----------------------------------------------------
+        # SHORT
+        # ----------------------------------------------------
+
         if not btc_long or btc_short:
 
             for item in short_candidates[:5]:
@@ -714,25 +889,38 @@ def main():
                     "SHORT"
                 )
 
-                if telegram_send(message):
+                if telegram_send(
+                    message
+                ):
+
                     messages_sent += 1
 
     else:
 
         print(
-            "4H kapanış penceresi değil. "
-            "Telegram mesajı gönderilmeyecek."
+            "Saat başı bildirim penceresi "
+            "değil. Telegram mesajı "
+            "gönderilmeyecek."
         )
 
+    # --------------------------------------------------------
+    # SONUÇ
+    # --------------------------------------------------------
+
     print()
+
     print(
         "Telegram gönderilen sinyal:",
         messages_sent
     )
 
     print()
-    print("TARAMA TAMAMLANDI.")
+
+    print(
+        "1H TARAMA TAMAMLANDI."
+    )
 
 
 if __name__ == "__main__":
+
     main()
