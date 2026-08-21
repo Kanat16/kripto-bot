@@ -19,13 +19,14 @@ BASE = "https://data-api.binance.vision"
 FUTURES_BASE = "https://fapi.binance.com"
 
 session = requests.Session()
+
 session.headers.update({
-    "User-Agent": "KriptoBot-1H/5.0"
+    "User-Agent": "KriptoBot-1H/6.0"
 })
 
 
 # ============================================================
-# BINANCE
+# BINANCE API
 # ============================================================
 
 def api_get(url, params=None):
@@ -98,6 +99,18 @@ def get_symbols():
 
     symbols = []
 
+    # Stablecoin / düşük hareketli pariteler
+    excluded_assets = {
+        "USDT",
+        "USDC",
+        "FDUSD",
+        "TUSD",
+        "USDP",
+        "DAI",
+        "EUR",
+        "TRY"
+    }
+
     for item in data["symbols"]:
 
         if item["status"] != "TRADING":
@@ -112,13 +125,21 @@ def get_symbols():
         ):
             continue
 
-        symbols.append(item["symbol"])
+        base_asset = item["baseAsset"]
+
+        # Stablecoinleri çıkar
+        if base_asset in excluded_assets:
+            continue
+
+        symbols.append(
+            item["symbol"]
+        )
 
     return symbols
 
 
 # ============================================================
-# EN YÜKSEK HACİMLİ COINLER
+# EN YÜKSEK HACİMLİ COİNLER
 # ============================================================
 
 def get_top_symbols(symbols):
@@ -320,7 +341,7 @@ def get_btc_trend():
 
     df = calculate_indicators(df)
 
-    # SON KAPANMIŞ 1H MUM
+    # Son kapanmış 1H mum
     last = df.iloc[-2]
 
     long_trend = (
@@ -389,26 +410,58 @@ def analyze_symbol(
 
         previous = df.iloc[-3]
 
-        long_score = 0
+        # ----------------------------------------------------
+        # RSI DEĞERİ GEÇERLİ Mİ?
+        # ----------------------------------------------------
 
+        if pd.isna(last["rsi"]):
+
+            return None
+
+        long_score = 0
         short_score = 0
 
         long_reasons = []
-
         short_reasons = []
 
-        # ----------------------------------------------------
-        # RSI LONG
-        # ----------------------------------------------------
+        # ====================================================
+        # LONG RSI
+        # ====================================================
 
+        # RSI 70 ve üzerindeyse LONG YOK
+        if last["rsi"] >= 70:
+
+            return {
+                "symbol": symbol,
+                "price": float(last["close"]),
+                "rsi": float(last["rsi"]),
+                "long_score": -99,
+                "short_score": 0,
+                "funding": get_funding_rate(symbol),
+                "candle_time": last["open_time"],
+                "long_reasons": [],
+                "short_reasons": []
+            }
+
+        # RSI 30-40 = güçlü LONG avantajı
         if 30 <= last["rsi"] <= 40:
+
+            long_score += 2
+
+            long_reasons.append(
+                "RSI 30-40 dip bölgesinde"
+            )
+
+        # RSI 40-50 = kabul edilebilir
+        elif 40 < last["rsi"] <= 50:
 
             long_score += 1
 
             long_reasons.append(
-                "RSI 30-40 bölgesinde"
+                "RSI toparlanma bölgesinde"
             )
 
+        # RSI aşağıdan yukarı dönüyor
         if (
             previous["rsi"] < 40
             and
@@ -421,18 +474,44 @@ def analyze_symbol(
                 "RSI yukarı dönüyor"
             )
 
-        # ----------------------------------------------------
-        # RSI SHORT
-        # ----------------------------------------------------
+        # ====================================================
+        # SHORT RSI
+        # ====================================================
 
-        if last["rsi"] >= 60:
+        # RSI 30 altındaysa SHORT YOK
+        if last["rsi"] <= 30:
+
+            return {
+                "symbol": symbol,
+                "price": float(last["close"]),
+                "rsi": float(last["rsi"]),
+                "long_score": long_score,
+                "short_score": -99,
+                "funding": get_funding_rate(symbol),
+                "candle_time": last["open_time"],
+                "long_reasons": long_reasons,
+                "short_reasons": []
+            }
+
+        # RSI 60-70 = SHORT avantajı
+        if 60 <= last["rsi"] <= 70:
+
+            short_score += 2
+
+            short_reasons.append(
+                "RSI 60-70 yüksek bölgesinde"
+            )
+
+        # RSI 50-60 = zayıf SHORT
+        elif 50 <= last["rsi"] < 60:
 
             short_score += 1
 
             short_reasons.append(
-                "RSI yüksek"
+                "RSI aşağı dönüş bölgesinde"
             )
 
+        # RSI yukarıdan aşağı dönüyor
         if (
             previous["rsi"] > 60
             and
@@ -445,9 +524,9 @@ def analyze_symbol(
                 "RSI aşağı dönüyor"
             )
 
-        # ----------------------------------------------------
-        # EMA20 KIRILIMI LONG
-        # ----------------------------------------------------
+        # ====================================================
+        # EMA20 LONG
+        # ====================================================
 
         if (
             previous["close"] <= previous["ema20"]
@@ -455,15 +534,15 @@ def analyze_symbol(
             last["close"] > last["ema20"]
         ):
 
-            long_score += 1
+            long_score += 2
 
             long_reasons.append(
                 "EMA20 yukarı kırıldı"
             )
 
-        # ----------------------------------------------------
-        # EMA20 KIRILIMI SHORT
-        # ----------------------------------------------------
+        # ====================================================
+        # EMA20 SHORT
+        # ====================================================
 
         if (
             previous["close"] >= previous["ema20"]
@@ -471,15 +550,15 @@ def analyze_symbol(
             last["close"] < last["ema20"]
         ):
 
-            short_score += 1
+            short_score += 2
 
             short_reasons.append(
                 "EMA20 aşağı kırıldı"
             )
 
-        # ----------------------------------------------------
+        # ====================================================
         # EMA20 / EMA50 TREND
-        # ----------------------------------------------------
+        # ====================================================
 
         if last["ema20"] > last["ema50"]:
 
@@ -497,9 +576,9 @@ def analyze_symbol(
                 "EMA20 < EMA50"
             )
 
-        # ----------------------------------------------------
+        # ====================================================
         # MACD LONG
-        # ----------------------------------------------------
+        # ====================================================
 
         if last["macd"] > last["macd_signal"]:
 
@@ -509,9 +588,22 @@ def analyze_symbol(
                 "MACD pozitif"
             )
 
-        # ----------------------------------------------------
+        # MACD yukarı kesişim
+        if (
+            previous["macd"] <= previous["macd_signal"]
+            and
+            last["macd"] > last["macd_signal"]
+        ):
+
+            long_score += 1
+
+            long_reasons.append(
+                "MACD yukarı kesişti"
+            )
+
+        # ====================================================
         # MACD SHORT
-        # ----------------------------------------------------
+        # ====================================================
 
         if last["macd"] < last["macd_signal"]:
 
@@ -521,19 +613,33 @@ def analyze_symbol(
                 "MACD negatif"
             )
 
-        # ----------------------------------------------------
+        # MACD aşağı kesişim
+        if (
+            previous["macd"] >= previous["macd_signal"]
+            and
+            last["macd"] < last["macd_signal"]
+        ):
+
+            short_score += 1
+
+            short_reasons.append(
+                "MACD aşağı kesişti"
+            )
+
+        # ====================================================
         # HACİM
-        # ----------------------------------------------------
+        # ====================================================
 
         volume_strong = (
             last["volume"]
             >=
-            last["volume_avg"] * VOLUME_MULTIPLIER
+            last["volume_avg"]
+            * VOLUME_MULTIPLIER
         )
 
         if volume_strong:
 
-            # Mum yönüne göre hacim puanı
+            # Yükseliş mumu + güçlü hacim
             if last["close"] > last["open"]:
 
                 long_score += 1
@@ -542,6 +648,7 @@ def analyze_symbol(
                     "Yükseliş hacmi güçlü"
                 )
 
+            # Düşüş mumu + güçlü hacim
             elif last["close"] < last["open"]:
 
                 short_score += 1
@@ -550,31 +657,47 @@ def analyze_symbol(
                     "Düşüş hacmi güçlü"
                 )
 
-        # ----------------------------------------------------
+        # ====================================================
         # BTC TREND FİLTRESİ
-        # ----------------------------------------------------
+        # ====================================================
 
         if btc_long:
 
             long_score += 1
 
             long_reasons.append(
-                "BTC trend LONG"
+                "BTC 1H trend LONG"
             )
+
+        # BTC SHORT ise LONG'A ENGEL
+        if btc_short:
+
+            long_score = -99
+
+            long_reasons = []
 
         if btc_short:
 
             short_score += 1
 
             short_reasons.append(
-                "BTC trend SHORT"
+                "BTC 1H trend SHORT"
             )
 
-        # ----------------------------------------------------
-        # FUNDING
-        # ----------------------------------------------------
+        # BTC LONG ise SHORT'A ENGEL
+        if btc_long:
 
-        funding = get_funding_rate(symbol)
+            short_score = -99
+
+            short_reasons = []
+
+        # ====================================================
+        # FUNDING
+        # ====================================================
+
+        funding = get_funding_rate(
+            symbol
+        )
 
         return {
             "symbol": symbol,
@@ -679,13 +802,10 @@ def is_1h_notification_window():
         timezone.utc
     )
 
-    # Saat başındaki ilk 30 dakika
-    #
-    # Örnek:
-    # 12:00 -> bildirim
-    # 12:30 -> bildirim yok
-    # 13:00 -> bildirim
-    #
+    # 00:00 - 00:29
+    # 01:00 - 01:29
+    # 02:00 - 02:29
+    # vb.
 
     return now.minute < 30
 
@@ -704,6 +824,10 @@ def main():
 
     print("=" * 60)
 
+    # --------------------------------------------------------
+    # TELEGRAM KONTROL
+    # --------------------------------------------------------
+
     if not TELEGRAM_BOT_TOKEN:
 
         print(
@@ -715,6 +839,10 @@ def main():
         print(
             "UYARI: TELEGRAM_CHAT_ID bulunamadı."
         )
+
+    # --------------------------------------------------------
+    # COINLER
+    # --------------------------------------------------------
 
     print(
         "Coin listesi alınıyor..."
@@ -776,6 +904,7 @@ def main():
 
             continue
 
+        # LONG
         if (
             result["long_score"]
             >= MIN_SCORE
@@ -785,6 +914,7 @@ def main():
                 result
             )
 
+        # SHORT
         if (
             result["short_score"]
             >= MIN_SCORE
@@ -807,6 +937,10 @@ def main():
         key=lambda x: x["short_score"],
         reverse=True
     )
+
+    # --------------------------------------------------------
+    # SONUÇLAR
+    # --------------------------------------------------------
 
     print()
 
@@ -861,50 +995,45 @@ def main():
         # LONG
         # ----------------------------------------------------
 
-        if not btc_short or btc_long:
+        for item in long_candidates[:5]:
 
-            for item in long_candidates[:5]:
+            message = format_signal(
+                item,
+                "LONG"
+            )
 
-                message = format_signal(
-                    item,
-                    "LONG"
-                )
+            if telegram_send(
+                message
+            ):
 
-                if telegram_send(
-                    message
-                ):
-
-                    messages_sent += 1
+                messages_sent += 1
 
         # ----------------------------------------------------
         # SHORT
         # ----------------------------------------------------
 
-        if not btc_long or btc_short:
+        for item in short_candidates[:5]:
 
-            for item in short_candidates[:5]:
+            message = format_signal(
+                item,
+                "SHORT"
+            )
 
-                message = format_signal(
-                    item,
-                    "SHORT"
-                )
+            if telegram_send(
+                message
+            ):
 
-                if telegram_send(
-                    message
-                ):
-
-                    messages_sent += 1
+                messages_sent += 1
 
     else:
 
         print(
-            "Saat başı bildirim penceresi "
-            "değil. Telegram mesajı "
-            "gönderilmeyecek."
+            "1H kapanış penceresi değil. "
+            "Telegram mesajı gönderilmeyecek."
         )
 
     # --------------------------------------------------------
-    # SONUÇ
+    # BİTİŞ
     # --------------------------------------------------------
 
     print()
@@ -920,6 +1049,10 @@ def main():
         "1H TARAMA TAMAMLANDI."
     )
 
+
+# ============================================================
+# ÇALIŞTIR
+# ============================================================
 
 if __name__ == "__main__":
 
