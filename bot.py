@@ -1,4 +1,965 @@
-print()
+import os
+import requests
+import pandas as pd
+import numpy as np
+from datetime import datetime, timezone
+
+# ============================================================
+# AYARLAR
+# ============================================================
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
+TOP_SYMBOLS = int(os.getenv("TOP_SYMBOLS", "100"))
+MIN_SCORE = int(os.getenv("MIN_SCORE", "4"))
+VOLUME_MULTIPLIER = float(os.getenv("VOLUME_MULTIPLIER", "1.50"))
+
+BASE = "https://data-api.binance.vision"
+FUTURES_BASE = "https://fapi.binance.com"
+
+session = requests.Session()
+
+session.headers.update({
+    "User-Agent": "KriptoBot-1H/7.0"
+})
+
+
+# ============================================================
+# BINANCE API
+# ============================================================
+
+def api_get(url, params=None):
+
+    response = session.get(
+        url,
+        params=params,
+        timeout=20
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+# ============================================================
+# TELEGRAM
+# ============================================================
+
+def telegram_send(message):
+
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+
+        print("Telegram bilgileri eksik.")
+
+        return False
+
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    )
+
+    data = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+
+    try:
+
+        response = session.post(
+            url,
+            data=data,
+            timeout=20
+        )
+
+        response.raise_for_status()
+
+        print("Telegram mesajı gönderildi.")
+
+        return True
+
+    except Exception as e:
+
+        print("Telegram hatası:", e)
+
+        return False
+
+
+# ============================================================
+# SPOT COINLER
+# ============================================================
+
+def get_symbols():
+
+    data = api_get(
+        f"{BASE}/api/v3/exchangeInfo"
+    )
+
+    symbols = []
+
+    # Stablecoin ve uygun olmayan varlıklar
+    excluded_assets = {
+        "USDT",
+        "USDC",
+        "FDUSD",
+        "TUSD",
+        "USDP",
+        "DAI",
+        "EUR",
+        "TRY"
+    }
+
+    for item in data["symbols"]:
+
+        if item["status"] != "TRADING":
+            continue
+
+        if item["quoteAsset"] != "USDT":
+            continue
+
+        if not item.get(
+            "isSpotTradingAllowed",
+            False
+        ):
+            continue
+
+        base_asset = item["baseAsset"]
+
+        if base_asset in excluded_assets:
+            continue
+
+        symbols.append(
+            item["symbol"]
+        )
+
+    return symbols
+
+
+# ============================================================
+# EN YÜKSEK HACİMLİ COİNLER
+# ============================================================
+
+def get_top_symbols(symbols):
+
+    data = api_get(
+        f"{BASE}/api/v3/ticker/24hr"
+    )
+
+    allowed = set(symbols)
+
+    volumes = {}
+
+    for item in data:
+
+        symbol = item["symbol"]
+
+        if symbol not in allowed:
+            continue
+
+        try:
+
+            volumes[symbol] = float(
+                item["quoteVolume"]
+            )
+
+        except (TypeError, ValueError):
+
+            continue
+
+    sorted_symbols = sorted(
+        volumes,
+        key=volumes.get,
+        reverse=True
+    )
+
+    return sorted_symbols[:TOP_SYMBOLS]
+
+
+# ============================================================
+# 1H KLINE
+# ============================================================
+
+def get_klines(
+    symbol,
+    limit=150
+):
+
+    data = api_get(
+        f"{BASE}/api/v3/klines",
+        {
+            "symbol": symbol,
+            "interval": "1h",
+            "limit": limit
+        }
+    )
+
+    columns = [
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "close_time",
+        "quote_volume",
+        "trades",
+        "taker_base",
+        "taker_quote",
+        "ignore"
+    ]
+
+    df = pd.DataFrame(
+        data,
+        columns=columns
+    )
+
+    numeric_columns = [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+    ]
+
+    for column in numeric_columns:
+
+        df[column] = pd.to_numeric(
+            df[column],
+            errors="coerce"
+        )
+
+    df["open_time"] = pd.to_datetime(
+        df["open_time"],
+        unit="ms"
+    )
+
+    return df
+
+
+# ============================================================
+# İNDİKATÖRLER
+# ============================================================
+
+def calculate_indicators(df):
+
+    # --------------------------------------------------------
+    # EMA20
+    # --------------------------------------------------------
+
+    df["ema20"] = df["close"].ewm(
+        span=20,
+        adjust=False
+    ).mean()
+
+    # --------------------------------------------------------
+    # EMA50
+    # --------------------------------------------------------
+
+    df["ema50"] = df["close"].ewm(
+        span=50,
+        adjust=False
+    ).mean()
+
+    # --------------------------------------------------------
+    # RSI14
+    # --------------------------------------------------------
+
+    delta = df["close"].diff()
+
+    gain = delta.clip(
+        lower=0
+    )
+
+    loss = -delta.clip(
+        upper=0
+    )
+
+    avg_gain = gain.rolling(
+        14
+    ).mean()
+
+    avg_loss = loss.rolling(
+        14
+    ).mean()
+
+    rs = avg_gain / avg_loss.replace(
+        0,
+        np.nan
+    )
+
+    df["rsi"] = 100 - (
+        100 / (1 + rs)
+    )
+
+    # --------------------------------------------------------
+    # MACD
+    # --------------------------------------------------------
+
+    ema12 = df["close"].ewm(
+        span=12,
+        adjust=False
+    ).mean()
+
+    ema26 = df["close"].ewm(
+        span=26,
+        adjust=False
+    ).mean()
+
+    df["macd"] = (
+        ema12 - ema26
+    )
+
+    df["macd_signal"] = df["macd"].ewm(
+        span=9,
+        adjust=False
+    ).mean()
+
+    # --------------------------------------------------------
+    # HACİM ORTALAMASI
+    # --------------------------------------------------------
+
+    df["volume_avg"] = df["volume"].rolling(
+        20
+    ).mean()
+
+    return df
+
+
+# ============================================================
+# BTC TREND
+# ============================================================
+
+def get_btc_trend():
+
+    df = get_klines(
+        "BTCUSDT",
+        100
+    )
+
+    df = calculate_indicators(df)
+
+    # Son kapanmış 1H mum
+    last = df.iloc[-2]
+
+    long_trend = (
+        last["close"] > last["ema20"]
+        and
+        last["ema20"] > last["ema50"]
+    )
+
+    short_trend = (
+        last["close"] < last["ema20"]
+        and
+        last["ema20"] < last["ema50"]
+    )
+
+    return long_trend, short_trend
+
+
+# ============================================================
+# FUNDING RATE
+# ============================================================
+
+def get_funding_rate(symbol):
+
+    try:
+
+        data = api_get(
+            f"{FUTURES_BASE}/fapi/v1/premiumIndex",
+            {
+                "symbol": symbol
+            }
+        )
+
+        return float(
+            data.get(
+                "lastFundingRate",
+                0
+            )
+        ) * 100
+
+    except Exception:
+
+        return 0.0
+
+
+# ============================================================
+# COIN ANALİZİ
+# ============================================================
+
+def analyze_symbol(
+    symbol,
+    btc_long,
+    btc_short
+):
+
+    try:
+
+        df = get_klines(symbol)
+
+        df = calculate_indicators(df)
+
+        # ----------------------------------------------------
+        # SADECE KAPANMIŞ MUM
+        # ----------------------------------------------------
+
+        last = df.iloc[-2]
+
+        previous = df.iloc[-3]
+
+        if pd.isna(last["rsi"]):
+
+            return None
+
+        long_score = 0
+        short_score = 0
+
+        long_reasons = []
+        short_reasons = []
+
+        # ====================================================
+        # LONG RSI
+        # ====================================================
+
+        # RSI 55 üzerindeyse LONG YOK
+        if last["rsi"] > 55:
+
+            long_score = -99
+
+            long_reasons = []
+
+        else:
+
+            # RSI 30-40 = güçlü LONG
+            if 30 <= last["rsi"] <= 40:
+
+                long_score += 2
+
+                long_reasons.append(
+                    "RSI 30-40 dip bölgesinde"
+                )
+
+            # RSI 40-55 = toparlanma bölgesi
+            elif 40 < last["rsi"] <= 55:
+
+                long_score += 1
+
+                long_reasons.append(
+                    "RSI 40-55 toparlanma bölgesinde"
+                )
+
+            # RSI yukarı dönüyor
+            if (
+                previous["rsi"] < 40
+                and
+                last["rsi"] > previous["rsi"]
+            ):
+
+                long_score += 1
+
+                long_reasons.append(
+                    "RSI yukarı dönüyor"
+                )
+
+        # ====================================================
+        # SHORT RSI
+        # ====================================================
+
+        # RSI 45 altındaysa SHORT YOK
+        if last["rsi"] < 45:
+
+            short_score = -99
+
+            short_reasons = []
+
+        else:
+
+            # RSI 60-70 = güçlü SHORT
+            if 60 <= last["rsi"] <= 70:
+
+                short_score += 2
+
+                short_reasons.append(
+                    "RSI 60-70 yüksek bölgesinde"
+                )
+
+            # RSI 45-60 = aşağı dönüş bölgesi
+            elif 45 <= last["rsi"] < 60:
+
+                short_score += 1
+
+                short_reasons.append(
+                    "RSI 45-60 aşağı dönüş bölgesinde"
+                )
+
+            # RSI aşağı dönüyor
+            if (
+                previous["rsi"] > 60
+                and
+                last["rsi"] < previous["rsi"]
+            ):
+
+                short_score += 1
+
+                short_reasons.append(
+                    "RSI aşağı dönüyor"
+                )
+
+        # ====================================================
+        # EMA20 LONG
+        # ====================================================
+
+        if (
+            long_score >= 0
+            and
+            previous["close"] <= previous["ema20"]
+            and
+            last["close"] > last["ema20"]
+        ):
+
+            long_score += 2
+
+            long_reasons.append(
+                "EMA20 yukarı kırıldı"
+            )
+
+        # ====================================================
+        # EMA20 SHORT
+        # ====================================================
+
+        if (
+            short_score >= 0
+            and
+            previous["close"] >= previous["ema20"]
+            and
+            last["close"] < last["ema20"]
+        ):
+
+            short_score += 2
+
+            short_reasons.append(
+                "EMA20 aşağı kırıldı"
+            )
+
+        # ====================================================
+        # EMA20 / EMA50 TREND
+        # ====================================================
+
+        if (
+            long_score >= 0
+            and
+            last["ema20"] > last["ema50"]
+        ):
+
+            long_score += 1
+
+            long_reasons.append(
+                "EMA20 > EMA50"
+            )
+
+        if (
+            short_score >= 0
+            and
+            last["ema20"] < last["ema50"]
+        ):
+
+            short_score += 1
+
+            short_reasons.append(
+                "EMA20 < EMA50"
+            )
+
+        # ====================================================
+        # MACD LONG
+        # ====================================================
+
+        if (
+            long_score >= 0
+            and
+            last["macd"] > last["macd_signal"]
+        ):
+
+            long_score += 1
+
+            long_reasons.append(
+                "MACD pozitif"
+            )
+
+        # MACD yukarı kesişim
+        if (
+            long_score >= 0
+            and
+            previous["macd"] <= previous["macd_signal"]
+            and
+            last["macd"] > last["macd_signal"]
+        ):
+
+            long_score += 1
+
+            long_reasons.append(
+                "MACD yukarı kesişti"
+            )
+
+        # ====================================================
+        # MACD SHORT
+        # ====================================================
+
+        if (
+            short_score >= 0
+            and
+            last["macd"] < last["macd_signal"]
+        ):
+
+            short_score += 1
+
+            short_reasons.append(
+                "MACD negatif"
+            )
+
+        # MACD aşağı kesişim
+        if (
+            short_score >= 0
+            and
+            previous["macd"] >= previous["macd_signal"]
+            and
+            last["macd"] < last["macd_signal"]
+        ):
+
+            short_score += 1
+
+            short_reasons.append(
+                "MACD aşağı kesişti"
+            )
+
+        # ====================================================
+        # HACİM
+        # ====================================================
+
+        volume_strong = (
+            last["volume"]
+            >=
+            last["volume_avg"]
+            * VOLUME_MULTIPLIER
+        )
+
+        if volume_strong:
+
+            # Güçlü yükseliş hacmi
+            if (
+                long_score >= 0
+                and
+                last["close"] > last["open"]
+            ):
+
+                long_score += 1
+
+                long_reasons.append(
+                    "Yükseliş hacmi güçlü"
+                )
+
+            # Güçlü düşüş hacmi
+            elif (
+                short_score >= 0
+                and
+                last["close"] < last["open"]
+            ):
+
+                short_score += 1
+
+                short_reasons.append(
+                    "Düşüş hacmi güçlü"
+                )
+
+        # ====================================================
+        # BTC TREND FİLTRESİ
+        # ====================================================
+
+        # BTC LONG -> LONG'a destek
+        if (
+            long_score >= 0
+            and
+            btc_long
+        ):
+
+            long_score += 1
+
+            long_reasons.append(
+                "BTC 1H trend LONG"
+            )
+
+        # BTC SHORT -> LONG ENGEL
+        if btc_short:
+
+            long_score = -99
+
+            long_reasons = []
+
+        # BTC SHORT -> SHORT'a destek
+        if (
+            short_score >= 0
+            and
+            btc_short
+        ):
+
+            short_score += 1
+
+            short_reasons.append(
+                "BTC 1H trend SHORT"
+            )
+
+        # BTC LONG -> SHORT ENGEL
+        if btc_long:
+
+            short_score = -99
+
+            short_reasons = []
+
+        # ====================================================
+        # FUNDING
+        # ====================================================
+
+        funding = get_funding_rate(
+            symbol
+        )
+
+        return {
+            "symbol": symbol,
+            "price": float(last["close"]),
+            "rsi": float(last["rsi"]),
+            "long_score": long_score,
+            "short_score": short_score,
+            "funding": funding,
+            "candle_time": last["open_time"],
+            "long_reasons": long_reasons,
+            "short_reasons": short_reasons
+        }
+
+    except Exception as e:
+
+        print(
+            f"{symbol} analiz hatası: {e}"
+        )
+
+        return None
+
+
+# ============================================================
+# TELEGRAM MESAJI
+# ============================================================
+
+def format_signal(
+    item,
+    direction
+):
+
+    if direction == "LONG":
+
+        title = "🟢 GÜÇLÜ LONG ADAYI"
+
+        score = item["long_score"]
+
+        reasons = item["long_reasons"]
+
+    else:
+
+        title = "🔴 GÜÇLÜ SHORT ADAYI"
+
+        score = item["short_score"]
+
+        reasons = item["short_reasons"]
+
+    funding = item["funding"]
+
+    if funding >= 0.05:
+
+        funding_text = (
+            "⚠️ Longlar çok kalabalık"
+        )
+
+    elif funding <= -0.05:
+
+        funding_text = (
+            "⚠️ Shortlar çok kalabalık"
+        )
+
+    else:
+
+        funding_text = (
+            "⚪ Funding dengeli"
+        )
+
+    message = (
+        f"<b>{title}</b>\n\n"
+        f"<b>Coin:</b> {item['symbol']}\n"
+        f"<b>Skor:</b> {score}\n"
+        f"<b>Fiyat:</b> {item['price']:.8f}\n"
+        f"<b>RSI:</b> {item['rsi']:.2f}\n\n"
+        f"<b>Funding:</b> {funding:.4f}%\n"
+        f"{funding_text}\n\n"
+        f"<b>Nedenler:</b>\n"
+    )
+
+    for reason in reasons:
+
+        message += (
+            f"• {reason}\n"
+        )
+
+    message += (
+        f"\n<b>1H Mum:</b> "
+        f"{item['candle_time'].strftime('%Y-%m-%d %H:%M')}\n\n"
+        "⚠️ Bu bir işlem emri değil, "
+        "teknik tarama sinyalidir."
+    )
+
+    return message
+
+
+# ============================================================
+# 1H BİLDİRİM PENCERESİ
+# ============================================================
+
+def is_1h_notification_window():
+
+    # Bildirim zamanlamasını GitHub Actions cron belirler.
+    # Workflow saat başına bir kez çalışacak şekilde ayarlanmalıdır.
+    # Tarama bittiğinde ayrıca dakika kontrolü yapılmaz.
+    return True
+
+
+# ============================================================
+# ANA PROGRAM
+# ============================================================
+
+def main():
+
+    print("=" * 60)
+
+    print(
+        "1H KRIPTO BOT BASLIYOR"
+    )
+
+    print("=" * 60)
+
+    # --------------------------------------------------------
+    # TELEGRAM KONTROL
+    # --------------------------------------------------------
+
+    if not TELEGRAM_BOT_TOKEN:
+
+        print(
+            "UYARI: TELEGRAM_BOT_TOKEN bulunamadı."
+        )
+
+    if not TELEGRAM_CHAT_ID:
+
+        print(
+            "UYARI: TELEGRAM_CHAT_ID bulunamadı."
+        )
+
+    # --------------------------------------------------------
+    # COIN LISTESI
+    # --------------------------------------------------------
+
+    print(
+        "Coin listesi alınıyor..."
+    )
+
+    symbols = get_symbols()
+
+    print(
+        "Toplam Spot USDT coin:",
+        len(symbols)
+    )
+
+    top_symbols = get_top_symbols(
+        symbols
+    )
+
+    print(
+        f"En yüksek hacimli "
+        f"{len(top_symbols)} coin taranacak."
+    )
+
+    # --------------------------------------------------------
+    # BTC TREND
+    # --------------------------------------------------------
+
+    btc_long, btc_short = get_btc_trend()
+
+    print(
+        f"BTC 1H trend: "
+        f"LONG={btc_long} "
+        f"SHORT={btc_short}"
+    )
+
+    long_candidates = []
+
+    short_candidates = []
+
+    # --------------------------------------------------------
+    # TARAMA
+    # --------------------------------------------------------
+
+    for index, symbol in enumerate(
+        top_symbols,
+        start=1
+    ):
+
+        print(
+            f"[{index}/{len(top_symbols)}] "
+            f"{symbol}"
+        )
+
+        result = analyze_symbol(
+            symbol,
+            btc_long,
+            btc_short
+        )
+
+        if result is None:
+
+            continue
+
+        if (
+            result["long_score"]
+            >= MIN_SCORE
+        ):
+
+            long_candidates.append(
+                result
+            )
+
+        if (
+            result["short_score"]
+            >= MIN_SCORE
+        ):
+
+            short_candidates.append(
+                result
+            )
+
+    # --------------------------------------------------------
+    # SIRALAMA
+    # --------------------------------------------------------
+
+    long_candidates.sort(
+        key=lambda x: x["long_score"],
+        reverse=True
+    )
+
+    short_candidates.sort(
+        key=lambda x: x["short_score"],
+        reverse=True
+    )
+
+    # --------------------------------------------------------
+    # LONG ADAYLARI
+    # --------------------------------------------------------
+
+    print()
 
     print(
         "LONG ADAYLARI:",
